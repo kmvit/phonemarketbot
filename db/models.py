@@ -42,11 +42,11 @@ def init_db():
             )
         ''')
         # Устанавливаем дефолтную наценку, если её нет
-        from config import DEFAULT_MARKUP_PERCENT
+        from config import DEFAULT_MARKUP_AMOUNT
         cur.execute('''
             INSERT OR IGNORE INTO settings (key, value) 
-            VALUES ('markup_percent', ?)
-        ''', (str(DEFAULT_MARKUP_PERCENT),))
+            VALUES ('markup_amount', ?)
+        ''', (str(DEFAULT_MARKUP_AMOUNT),))
         
         # Таблица корзины
         cur.execute('''
@@ -85,14 +85,79 @@ def init_db():
             )
         ''')
         
-        # Таблица персональных процентов пользователей
+        # Таблица персональных наценок пользователей
+        # Миграция: проверяем, существует ли старая таблица с markup_percent
+        cur.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='user_markups'")
+        table_exists = cur.fetchone()
+        
+        if table_exists:
+            # Проверяем, есть ли старая колонка markup_percent
+            cur.execute("PRAGMA table_info(user_markups)")
+            columns = [col[1] for col in cur.fetchall()]
+            
+            if 'markup_percent' in columns and 'markup_amount' not in columns:
+                # Миграция: создаем новую таблицу с правильной структурой
+                cur.execute('''
+                    CREATE TABLE IF NOT EXISTS user_markups_new (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        user_id INTEGER NOT NULL UNIQUE,
+                        markup_amount REAL NOT NULL,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    )
+                ''')
+                # Копируем данные (проценты не конвертируем в суммы, так как это разные единицы)
+                # Просто создаем новую таблицу, старые данные теряются
+                cur.execute("DROP TABLE user_markups")
+                cur.execute("ALTER TABLE user_markups_new RENAME TO user_markups")
+            elif 'markup_amount' not in columns:
+                # Если нет ни одной колонки, создаем таблицу заново
+                cur.execute("DROP TABLE IF EXISTS user_markups")
+                cur.execute('''
+                    CREATE TABLE IF NOT EXISTS user_markups (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        user_id INTEGER NOT NULL UNIQUE,
+                        markup_amount REAL NOT NULL,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    )
+                ''')
+        else:
+            # Таблица не существует, создаем новую
+            cur.execute('''
+                CREATE TABLE IF NOT EXISTS user_markups (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id INTEGER NOT NULL UNIQUE,
+                    markup_amount REAL NOT NULL,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            ''')
+        
+        # Миграция settings: удаляем старый ключ markup_percent, если он существует
+        cur.execute("DELETE FROM settings WHERE key = 'markup_percent'")
+        
+        # Таблица товаров предзаказа (отдельная от основного прайса)
         cur.execute('''
-            CREATE TABLE IF NOT EXISTS user_markups (
+            CREATE TABLE IF NOT EXISTS preorder_products (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                user_id INTEGER NOT NULL UNIQUE,
-                markup_percent REAL NOT NULL,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                category TEXT,
+                name TEXT,
+                memory TEXT,
+                color TEXT,
+                country TEXT,
+                price INTEGER
+            )
+        ''')
+        
+        # Таблица корзины предзаказа (отдельная от основной корзины)
+        cur.execute('''
+            CREATE TABLE IF NOT EXISTS preorder_cart (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                product_id INTEGER NOT NULL,
+                quantity INTEGER DEFAULT 1,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         ''')
         

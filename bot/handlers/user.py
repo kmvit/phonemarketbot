@@ -9,12 +9,16 @@ import re
 from collections import OrderedDict
 from bot.keyboards.category import (
     get_main_keyboard, get_categories_keyboard, get_subcategories_keyboard,
-    parent_categories, parent_to_subcategories, get_category_with_icon, category_icons
+    parent_categories, parent_to_subcategories, get_category_with_icon, category_icons,
+    get_preorder_categories_keyboard
 )
 from db.crud import (
     get_products_by_category, get_available_subcategories, add_to_cart,
     get_cart, remove_from_cart, clear_cart, create_order, get_product_by_id, get_order,
-    update_cart_quantity
+    update_cart_quantity,
+    get_preorder_products_by_category, get_preorder_available_subcategories,
+    get_preorder_categories, get_preorder_product_by_id, add_to_preorder_cart,
+    get_preorder_cart, remove_from_preorder_cart, update_preorder_cart_quantity
 )
 from admin.discount import calculate_price_with_markup
 
@@ -72,7 +76,42 @@ def extract_base_model(product_name):
 @router.message(Command("start"))
 async def cmd_start(message: types.Message, state: FSMContext):
     """Обработчик команды /start с поддержкой deep links для добавления товара"""
-    # Проверяем, есть ли параметр для добавления товара
+    # Проверяем, есть ли параметр для добавления товара предзаказа
+    if message.text and "preorder_" in message.text:
+        try:
+            # Извлекаем ID товара предзаказа из параметра
+            parts = message.text.split("preorder_")
+            if len(parts) > 1:
+                product_id = int(parts[1].split()[0])
+                user_id = message.from_user.id
+                
+                product = get_preorder_product_by_id(product_id)
+                if not product:
+                    await message.answer("❌ Товар предзаказа не найден")
+                    return
+                
+                # Сохраняем product_id и флаг предзаказа в FSM
+                await state.update_data(product_id=product_id, is_preorder=True)
+                await state.set_state(AddToCartStates.waiting_for_quantity)
+                
+                # Показываем товар и запрашиваем количество
+                country_with_flag = get_country_with_flag(product['country'])
+                final_price = calculate_price_with_markup(product['price'], user_id)
+                
+                await message.answer(
+                    f"📦 <b>Товар предзаказа:</b>\n\n"
+                    f"{product['name']}\n"
+                    f"{country_with_flag}\n"
+                    f"Цена: <b>{final_price}₽</b>\n\n"
+                    f"Введите количество товара (число от 1 до 100):",
+                    parse_mode='HTML',
+                    reply_markup=get_main_keyboard()
+                )
+                return
+        except (ValueError, IndexError):
+            pass  # Если ошибка, продолжаем как обычный /start
+    
+    # Проверяем, есть ли параметр для добавления обычного товара
     if message.text and "add_" in message.text:
         try:
             # Извлекаем ID товара из параметра
@@ -87,7 +126,7 @@ async def cmd_start(message: types.Message, state: FSMContext):
                     return
                 
                 # Сохраняем product_id в FSM и переводим в состояние ожидания количества
-                await state.update_data(product_id=product_id)
+                await state.update_data(product_id=product_id, is_preorder=False)
                 await state.set_state(AddToCartStates.waiting_for_quantity)
                 
                 # Показываем товар и запрашиваем количество
@@ -121,10 +160,71 @@ async def show_categories(message: types.Message, state: FSMContext):
     # Очищаем FSM состояние, если было
     await state.clear()
     user_id = message.from_user.id
-    user_states[user_id] = {'screen': 'categories'}
+    user_states[user_id] = {'screen': 'categories', 'source': 'standard'}
+    
+    # Получаем категории, в которых есть товары (проверяем оба source: 'standard' и 'simple')
+    from db.crud import get_available_parent_categories
+    from bot.keyboards.category import parent_categories
+    
+    # Проверяем категории для обоих source
+    available_standard = get_available_parent_categories(parent_categories, 'standard')
+    available_simple = get_available_parent_categories(parent_categories, 'simple')
+    # Объединяем и убираем дубликаты
+    available_categories = list(set(available_standard + available_simple))
+    
+    if not available_categories:
+        await message.answer(
+            "❌ В прайсе пока нет товаров.\n\n"
+            "Администратор должен загрузить прайс через админку.",
+            reply_markup=get_main_keyboard()
+        )
+        return
+    
     await message.answer(
         "Выберите категорию:",
-        reply_markup=get_categories_keyboard()
+        reply_markup=get_categories_keyboard('standard')
+    )
+
+@router.message(lambda m: m.text == "Предзаказ")
+async def show_preorder_info(message: types.Message, state: FSMContext):
+    # Очищаем FSM состояние, если было
+    await state.clear()
+    user_id = message.from_user.id
+    
+    # Отправляем информационное сообщение о предзаказе
+    preorder_text = (
+        "📦 <b>Предзаказ</b>\n\n"
+        "Вместе с выгодной ценой вы получаете 1 год гарантии.\n\n"
+        "<b>Условия предзаказа:</b>\n"
+        "• Оплата: задаток 40%\n"
+        "• Срок: 2–7 дней, обычно до 3 дней\n"
+        "• Выдача: в нашем магазине\n\n"
+        "<b>Прозрачность:</b>\n"
+        "• Цена фиксируется при оформлении\n"
+        "• Все детали (регион, цвет, характеристики, возможные доп. расходы) обсуждаются заранее\n"
+        "• Перед подтверждением вы получаете полный расчёт\n"
+        "• Задаток обязателен для фиксации цены\n\n"
+        "<b>Дополнительно:</b>\n"
+        "• Уведомим, когда заказ будет готов\n"
+        "• Можем помочь с выбором и предложить аксессуары"
+    )
+    
+    # Получаем категории предзаказа из БД
+    preorder_categories = get_preorder_categories()
+    
+    if not preorder_categories:
+        await message.answer(
+            preorder_text + "\n\n❌ В предзаказе пока нет товаров.",
+            parse_mode='HTML',
+            reply_markup=get_main_keyboard()
+        )
+        return
+    
+    user_states[user_id] = {'screen': 'preorder_categories', 'is_preorder': True}
+    await message.answer(
+        preorder_text,
+        parse_mode='HTML',
+        reply_markup=get_preorder_categories_keyboard(preorder_categories)
     )
 
 @router.message(lambda m: m.text == "Назад")
@@ -134,66 +234,99 @@ async def go_back(message: types.Message, state: FSMContext):
     user_id = message.from_user.id
     user_state = user_states.get(user_id, {'screen': 'main'})
     
-    # Определяем, куда вернуться на основе текущего состояния
-    if user_state.get('screen') == 'subcategories':
-        # Возвращаемся к списку родительских категорий
-        user_states[user_id] = {'screen': 'categories'}
-        await message.answer(
-            "Выберите категорию:",
-            reply_markup=get_categories_keyboard()
-        )
-    elif user_state.get('screen') == 'products':
-        # Возвращаемся к списку подкатегорий
-        parent_cat = user_state.get('parent_category')
-        if parent_cat:
-            possible_subcats = parent_to_subcategories.get(parent_cat, [])
-            available_subcats = get_available_subcategories(parent_cat, possible_subcats)
-            
-            if available_subcats:
-                user_states[user_id] = {'screen': 'subcategories', 'parent_category': parent_cat}
-                await message.answer(
-                    f"Выберите подкатегорию:",
-                    reply_markup=get_subcategories_keyboard(parent_cat, available_subcats)
-                )
+    # Проверяем, это предзаказ или обычный прайс
+    is_preorder = user_state.get('is_preorder', False)
+    
+    if is_preorder:
+        # Логика для предзаказа
+        if user_state.get('screen') == 'preorder_products':
+            # Возвращаемся к категориям предзаказа
+            preorder_categories = get_preorder_categories()
+            user_states[user_id] = {'screen': 'preorder_categories', 'is_preorder': True}
+            await message.answer(
+                "Выберите категорию:",
+                reply_markup=get_preorder_categories_keyboard(preorder_categories)
+            )
+        else:
+            # Возвращаемся в главное меню
+            user_states[user_id] = {'screen': 'main'}
+            await message.answer(
+                'Главное меню:',
+                reply_markup=get_main_keyboard()
+            )
+    else:
+        # Логика для обычного прайса
+        source = user_state.get('source', 'standard')
+        
+        if user_state.get('screen') == 'subcategories':
+            # Возвращаемся к списку родительских категорий
+            user_states[user_id] = {'screen': 'categories', 'source': source}
+            await message.answer(
+                "Выберите категорию:",
+                reply_markup=get_categories_keyboard()
+            )
+        elif user_state.get('screen') == 'products':
+            # Возвращаемся к списку подкатегорий
+            parent_cat = user_state.get('parent_category')
+            if parent_cat:
+                possible_subcats = parent_to_subcategories.get(parent_cat, [])
+                available_subcats = get_available_subcategories(parent_cat, possible_subcats, source)
+                
+                if available_subcats:
+                    user_states[user_id] = {'screen': 'subcategories', 'parent_category': parent_cat, 'source': source}
+                    await message.answer(
+                        f"Выберите подкатегорию:",
+                        reply_markup=get_subcategories_keyboard(parent_cat, available_subcats)
+                    )
+                else:
+                    # Если нет подкатегорий, возвращаемся к категориям
+                    user_states[user_id] = {'screen': 'categories', 'source': source}
+                    await message.answer(
+                        "Выберите категорию:",
+                        reply_markup=get_categories_keyboard()
+                    )
             else:
-                # Если нет подкатегорий, возвращаемся к категориям
-                user_states[user_id] = {'screen': 'categories'}
+                # Если нет информации о родительской категории, возвращаемся к категориям
+                user_states[user_id] = {'screen': 'categories', 'source': source}
                 await message.answer(
                     "Выберите категорию:",
                     reply_markup=get_categories_keyboard()
                 )
         else:
-            # Если нет информации о родительской категории, возвращаемся к категориям
-            user_states[user_id] = {'screen': 'categories'}
+            # По умолчанию возвращаемся в главное меню
+            user_states[user_id] = {'screen': 'main'}
             await message.answer(
-                "Выберите категорию:",
-                reply_markup=get_categories_keyboard()
+                'Главное меню:',
+                reply_markup=get_main_keyboard()
             )
-    else:
-        # По умолчанию возвращаемся в главное меню
-        user_states[user_id] = {'screen': 'main'}
-        await message.answer(
-            'Главное меню:',
-            reply_markup=get_main_keyboard()
-        )
 
 @router.message(lambda m: m.text == "Помощь")
 async def help_menu(message: types.Message):
     await message.answer("Это бот для просмотра прайса. Выберите 'Прайс' для просмотра товаров.")
 
-def is_parent_category(text):
+def is_parent_category(text, user_state=None):
     """Проверяет, является ли сообщение выбором родительской категории"""
     if not text:
         return False, None
+    
+    # Пропускаем, если это предзаказ
+    if user_state and user_state.get('is_preorder'):
+        return False, None
+    
     for parent_cat in parent_categories:
         if text == get_category_with_icon(parent_cat) or text == parent_cat:
             return True, parent_cat
     return False, None
 
-def is_subcategory(text):
+def is_subcategory(text, user_state=None):
     """Проверяет, является ли сообщение выбором подкатегории"""
     if not text:
         return False, None
+    
+    # Пропускаем, если это предзаказ
+    if user_state and user_state.get('is_preorder'):
+        return False, None
+    
     # Проверяем все подкатегории из всех родительских категорий
     for parent_cat, subcats in parent_to_subcategories.items():
         for subcat in subcats:
@@ -201,18 +334,25 @@ def is_subcategory(text):
                 return True, subcat
     return False, None
 
-@router.message(lambda m: is_parent_category(m.text)[0])
+@router.message(lambda m: is_parent_category(m.text, user_states.get(m.from_user.id, {}))[0])
 async def show_subcategories(message: types.Message):
     """Показывает подкатегории для выбранной родительской категории"""
     user_id = message.from_user.id
-    _, parent_cat = is_parent_category(message.text)
+    user_state = user_states.get(user_id, {'screen': 'main', 'source': 'standard'})
+    _, parent_cat = is_parent_category(message.text, user_state)
+    
+    # Получаем source из состояния пользователя (по умолчанию 'standard')
+    source = user_state.get('source', 'standard')
     
     # Сохраняем состояние
-    user_states[user_id] = {'screen': 'subcategories', 'parent_category': parent_cat}
+    user_states[user_id] = {'screen': 'subcategories', 'parent_category': parent_cat, 'source': source}
     
-    # Получаем подкатегории, которые есть в БД
+    # Получаем подкатегории, которые есть в БД (проверяем оба source: 'standard' и 'simple')
     possible_subcats = parent_to_subcategories.get(parent_cat, [])
-    available_subcats = get_available_subcategories(parent_cat, possible_subcats)
+    available_subcats_standard = get_available_subcategories(parent_cat, possible_subcats, 'standard')
+    available_subcats_simple = get_available_subcategories(parent_cat, possible_subcats, 'simple')
+    # Объединяем и убираем дубликаты
+    available_subcats = list(set(available_subcats_standard + available_subcats_simple))
     
     if not available_subcats:
         await message.answer("В этой категории пока нет товаров.")
@@ -223,11 +363,17 @@ async def show_subcategories(message: types.Message):
         reply_markup=get_subcategories_keyboard(parent_cat, available_subcats)
     )
 
-@router.message(lambda m: is_subcategory(m.text)[0])
+    return True
+
+@router.message(lambda m: is_subcategory(m.text, user_states.get(m.from_user.id, {}))[0])
 async def show_products_by_category(message: types.Message):
     """Показывает товары выбранной подкатегории"""
     user_id = message.from_user.id
-    _, subcat = is_subcategory(message.text)
+    user_state = user_states.get(user_id, {})
+    _, subcat = is_subcategory(message.text, user_state)
+    
+    # Получаем source из состояния пользователя (по умолчанию 'standard')
+    source = user_state.get('source', 'standard')
     
     # Определяем родительскую категорию для этой подкатегории
     parent_cat = None
@@ -240,10 +386,16 @@ async def show_products_by_category(message: types.Message):
     user_states[user_id] = {
         'screen': 'products',
         'parent_category': parent_cat,
-        'subcategory': subcat
+        'subcategory': subcat,
+        'source': source
     }
     
-    products = get_products_by_category(subcat)
+    # Получаем товары из обоих source ('standard' и 'simple')
+    products_standard = get_products_by_category(subcat, 'standard')
+    products_simple = get_products_by_category(subcat, 'simple')
+    # Объединяем товары
+    products = products_standard + products_simple
+    
     if not products:
         await message.answer("В этой категории пока нет товаров.")
         return
@@ -327,6 +479,14 @@ async def process_quantity(message: types.Message, state: FSMContext):
     
     # Проверяем, что введено число
     try:
+        # Проверяем, что message.text существует и не пустой
+        if not message.text:
+            await message.answer(
+                "❌ Пожалуйста, введите число от 1 до 100.\n"
+                "Введите количество еще раз:"
+            )
+            return
+        
         quantity = int(message.text.strip())
         if quantity < 1 or quantity > 100:
             await message.answer(
@@ -335,9 +495,10 @@ async def process_quantity(message: types.Message, state: FSMContext):
             )
             return
         
-        # Получаем product_id из FSM
+        # Получаем product_id и флаг предзаказа из FSM
         data = await state.get_data()
         product_id = data.get('product_id')
+        is_preorder = data.get('is_preorder', False)
         
         if not product_id:
             await message.answer("❌ Ошибка: товар не найден. Попробуйте выбрать товар снова.")
@@ -345,14 +506,26 @@ async def process_quantity(message: types.Message, state: FSMContext):
             return
         
         # Получаем информацию о товаре
-        product = get_product_by_id(product_id)
-        if not product:
-            await message.answer("❌ Товар не найден")
-            await state.clear()
-            return
-        
-        # Добавляем товар в корзину с указанным количеством
-        add_to_cart(user_id, product_id, quantity=quantity)
+        if is_preorder:
+            product = get_preorder_product_by_id(product_id)
+            if not product:
+                await message.answer("❌ Товар предзаказа не найден")
+                await state.clear()
+                return
+            
+            # Добавляем товар в корзину предзаказа
+            add_to_preorder_cart(user_id, product_id, quantity=quantity)
+            cart_type = "корзину предзаказа"
+        else:
+            product = get_product_by_id(product_id)
+            if not product:
+                await message.answer("❌ Товар не найден")
+                await state.clear()
+                return
+            
+            # Добавляем товар в обычную корзину
+            add_to_cart(user_id, product_id, quantity=quantity)
+            cart_type = "корзину"
         
         country_with_flag = get_country_with_flag(product['country'])
         final_price = calculate_price_with_markup(product['price'], user_id)
@@ -361,7 +534,7 @@ async def process_quantity(message: types.Message, state: FSMContext):
         await state.clear()
         
         await message.answer(
-            f"✅ <b>Товар добавлен в корзину!</b>\n\n"
+            f"✅ <b>Товар добавлен в {cart_type}!</b>\n\n"
             f"{product['name']}, {country_with_flag}\n"
             f"Количество: <b>{quantity} шт.</b>\n"
             f"Цена за шт.: <b>{final_price}₽</b>\n"
@@ -380,16 +553,19 @@ async def process_quantity(message: types.Message, state: FSMContext):
 # Обработчик просмотра корзины
 @router.message(lambda m: m.text == "Корзина")
 async def show_cart(message: types.Message, state: FSMContext):
-    """Показывает корзину пользователя"""
+    """Показывает корзину пользователя (обычную и предзаказа)"""
     # Очищаем FSM состояние, если было
     await state.clear()
     user_id = message.from_user.id
-    cart_items = get_cart(user_id)
     
-    if not cart_items:
+    # Получаем обе корзины
+    cart_items = get_cart(user_id)
+    preorder_cart_items = get_preorder_cart(user_id)
+    
+    if not cart_items and not preorder_cart_items:
         await message.answer(
             "🛒 <b>Ваша корзина пуста</b>\n\n"
-            "Добавьте товары из прайса, нажав на строку товара.",
+            "Добавьте товары из прайса или предзаказа, нажав на строку товара.",
             parse_mode='HTML',
             reply_markup=get_main_keyboard()
         )
@@ -400,32 +576,57 @@ async def show_cart(message: types.Message, state: FSMContext):
     total_price = 0
     keyboard_buttons = []
     
-    for item in cart_items:
-        country_with_flag = get_country_with_flag(item['country'])
-        final_price = calculate_price_with_markup(item['price'], user_id)
-        item_price = final_price * item['quantity']
-        total_price += item_price
-        text += f"{item['name']}, {country_with_flag}\n"
-        text += f"Количество: <b>{item['quantity']} шт.</b> × {final_price}₽ = {item_price}₽\n\n"
-        
-        # Кнопки для изменения количества и удаления
-        decrease_callback = CartCallback(action="change_qty", cart_id=item['cart_id'], quantity=item['quantity'] - 1).pack()
-        increase_callback = CartCallback(action="change_qty", cart_id=item['cart_id'], quantity=item['quantity'] + 1).pack()
-        remove_callback = CartCallback(action="remove", cart_id=item['cart_id']).pack()
-        
-        # Создаем строку с кнопками: [-] [количество] [+] [Удалить]
-        keyboard_buttons.append([
-            InlineKeyboardButton(text="➖", callback_data=decrease_callback),
-            InlineKeyboardButton(text=f"{item['quantity']}", callback_data="noop"),
-            InlineKeyboardButton(text="➕", callback_data=increase_callback),
-            InlineKeyboardButton(text="❌", callback_data=remove_callback)
-        ])
+    # Обычные товары
+    if cart_items:
+        text += "<b>Обычные товары:</b>\n"
+        for item in cart_items:
+            country_with_flag = get_country_with_flag(item['country'])
+            final_price = calculate_price_with_markup(item['price'], user_id)
+            item_price = final_price * item['quantity']
+            total_price += item_price
+            text += f"{item['name']}, {country_with_flag}\n"
+            text += f"Количество: <b>{item['quantity']} шт.</b> × {final_price}₽ = {item_price}₽\n\n"
+            
+            # Кнопки для изменения количества и удаления
+            decrease_callback = CartCallback(action="change_qty", cart_id=item['cart_id'], quantity=item['quantity'] - 1).pack()
+            increase_callback = CartCallback(action="change_qty", cart_id=item['cart_id'], quantity=item['quantity'] + 1).pack()
+            remove_callback = CartCallback(action="remove", cart_id=item['cart_id']).pack()
+            
+            # Создаем строку с кнопками: [-] [количество] [+] [Удалить]
+            keyboard_buttons.append([
+                InlineKeyboardButton(text="➖", callback_data=decrease_callback),
+                InlineKeyboardButton(text=f"{item['quantity']}", callback_data="noop"),
+                InlineKeyboardButton(text="➕", callback_data=increase_callback),
+                InlineKeyboardButton(text="❌", callback_data=remove_callback)
+            ])
+    
+    # Товары предзаказа
+    if preorder_cart_items:
+        text += "<b>Товары предзаказа:</b>\n"
+        for item in preorder_cart_items:
+            country_with_flag = get_country_with_flag(item['country'])
+            final_price = calculate_price_with_markup(item['price'], user_id)
+            item_price = final_price * item['quantity']
+            total_price += item_price
+            text += f"{item['name']}, {country_with_flag}\n"
+            text += f"Количество: <b>{item['quantity']} шт.</b> × {final_price}₽ = {item_price}₽\n\n"
+            
+            # Кнопки для изменения количества и удаления предзаказа
+            decrease_callback = CartCallback(action="change_qty_preorder", cart_id=item['cart_id'], quantity=item['quantity'] - 1).pack()
+            increase_callback = CartCallback(action="change_qty_preorder", cart_id=item['cart_id'], quantity=item['quantity'] + 1).pack()
+            remove_callback = CartCallback(action="remove_preorder", cart_id=item['cart_id']).pack()
+            
+            keyboard_buttons.append([
+                InlineKeyboardButton(text="➖", callback_data=decrease_callback),
+                InlineKeyboardButton(text=f"{item['quantity']}", callback_data="noop"),
+                InlineKeyboardButton(text="➕", callback_data=increase_callback),
+                InlineKeyboardButton(text="❌", callback_data=remove_callback)
+            ])
     
     text += f"<b>Итого: {total_price}₽</b>"
     
     # Добавляем кнопку оформления заказа
     checkout_callback = CartCallback(action="checkout").pack()
-    print(f"DEBUG: Создана кнопка checkout с callback_data: {checkout_callback}")
     keyboard_buttons.append([InlineKeyboardButton(
         text="✅ Оформить заказ",
         callback_data=checkout_callback
@@ -464,6 +665,195 @@ async def handle_cart_callback(callback: types.CallbackQuery):
     
     # Отвечаем на callback сразу, чтобы убрать индикатор загрузки
     await callback.answer()
+    
+    if callback_data.action == "change_qty_preorder":
+        # Обработка изменения количества для предзаказа
+        if callback_data.cart_id and callback_data.quantity is not None:
+            if callback_data.quantity <= 0:
+                removed = remove_from_preorder_cart(user_id, callback_data.cart_id)
+                if removed:
+                    await callback.answer("✅ Товар удален из корзины предзаказа")
+                else:
+                    await callback.answer("❌ Ошибка при удалении товара", show_alert=True)
+            else:
+                updated = update_preorder_cart_quantity(user_id, callback_data.cart_id, callback_data.quantity)
+                if updated:
+                    await callback.answer(f"✅ Количество изменено: {callback_data.quantity} шт.")
+                else:
+                    await callback.answer("❌ Ошибка при изменении количества", show_alert=True)
+            
+            # Перезагружаем корзину - просто обновляем сообщение
+            cart_items = get_cart(user_id)
+            preorder_cart_items = get_preorder_cart(user_id)
+            
+            if not cart_items and not preorder_cart_items:
+                await callback.message.edit_text(
+                    "🛒 <b>Ваша корзина пуста</b>\n\n"
+                    "Добавьте товары из прайса или предзаказа, нажав на строку товара.",
+                    parse_mode='HTML'
+                )
+                return
+            
+            # Формируем сообщение с товарами (копируем логику из show_cart)
+            text = "🛒 <b>Ваша корзина</b>\n\n"
+            total_price = 0
+            keyboard_buttons = []
+            
+            if cart_items:
+                text += "<b>Обычные товары:</b>\n"
+                for item in cart_items:
+                    country_with_flag = get_country_with_flag(item['country'])
+                    final_price = calculate_price_with_markup(item['price'], user_id)
+                    item_price = final_price * item['quantity']
+                    total_price += item_price
+                    text += f"{item['name']}, {country_with_flag}\n"
+                    text += f"Количество: <b>{item['quantity']} шт.</b> × {final_price}₽ = {item_price}₽\n\n"
+                    
+                    decrease_callback = CartCallback(action="change_qty", cart_id=item['cart_id'], quantity=item['quantity'] - 1).pack()
+                    increase_callback = CartCallback(action="change_qty", cart_id=item['cart_id'], quantity=item['quantity'] + 1).pack()
+                    remove_callback = CartCallback(action="remove", cart_id=item['cart_id']).pack()
+                    
+                    keyboard_buttons.append([
+                        InlineKeyboardButton(text="➖", callback_data=decrease_callback),
+                        InlineKeyboardButton(text=f"{item['quantity']}", callback_data="noop"),
+                        InlineKeyboardButton(text="➕", callback_data=increase_callback),
+                        InlineKeyboardButton(text="❌", callback_data=remove_callback)
+                    ])
+            
+            if preorder_cart_items:
+                text += "<b>Товары предзаказа:</b>\n"
+                for item in preorder_cart_items:
+                    country_with_flag = get_country_with_flag(item['country'])
+                    final_price = calculate_price_with_markup(item['price'], user_id)
+                    item_price = final_price * item['quantity']
+                    total_price += item_price
+                    text += f"{item['name']}, {country_with_flag}\n"
+                    text += f"Количество: <b>{item['quantity']} шт.</b> × {final_price}₽ = {item_price}₽\n\n"
+                    
+                    decrease_callback = CartCallback(action="change_qty_preorder", cart_id=item['cart_id'], quantity=item['quantity'] - 1).pack()
+                    increase_callback = CartCallback(action="change_qty_preorder", cart_id=item['cart_id'], quantity=item['quantity'] + 1).pack()
+                    remove_callback = CartCallback(action="remove_preorder", cart_id=item['cart_id']).pack()
+                    
+                    keyboard_buttons.append([
+                        InlineKeyboardButton(text="➖", callback_data=decrease_callback),
+                        InlineKeyboardButton(text=f"{item['quantity']}", callback_data="noop"),
+                        InlineKeyboardButton(text="➕", callback_data=increase_callback),
+                        InlineKeyboardButton(text="❌", callback_data=remove_callback)
+                    ])
+            
+            text += f"<b>Итого: {total_price}₽</b>"
+            
+            checkout_callback = CartCallback(action="checkout").pack()
+            keyboard_buttons.append([InlineKeyboardButton(
+                text="✅ Оформить заказ",
+                callback_data=checkout_callback
+            )])
+            
+            inline_keyboard = InlineKeyboardMarkup(inline_keyboard=keyboard_buttons)
+            
+            try:
+                await callback.message.edit_text(
+                    text,
+                    parse_mode='HTML',
+                    reply_markup=inline_keyboard
+                )
+            except:
+                await callback.message.answer(
+                    text,
+                    parse_mode='HTML',
+                    reply_markup=inline_keyboard
+                )
+            return
+    
+    if callback_data.action == "remove_preorder":
+        # Обработка удаления товара предзаказа
+        if callback_data.cart_id:
+            removed = remove_from_preorder_cart(user_id, callback_data.cart_id)
+            if removed:
+                await callback.answer("✅ Товар удален из корзины предзаказа")
+                # Перезагружаем корзину (используем ту же логику)
+                cart_items = get_cart(user_id)
+                preorder_cart_items = get_preorder_cart(user_id)
+                
+                if not cart_items and not preorder_cart_items:
+                    await callback.message.edit_text(
+                        "🛒 <b>Ваша корзина пуста</b>\n\n"
+                        "Добавьте товары из прайса или предзаказа, нажав на строку товара.",
+                        parse_mode='HTML'
+                    )
+                    return
+                
+                text = "🛒 <b>Ваша корзина</b>\n\n"
+                total_price = 0
+                keyboard_buttons = []
+                
+                if cart_items:
+                    text += "<b>Обычные товары:</b>\n"
+                    for item in cart_items:
+                        country_with_flag = get_country_with_flag(item['country'])
+                        final_price = calculate_price_with_markup(item['price'], user_id)
+                        item_price = final_price * item['quantity']
+                        total_price += item_price
+                        text += f"{item['name']}, {country_with_flag}\n"
+                        text += f"Количество: <b>{item['quantity']} шт.</b> × {final_price}₽ = {item_price}₽\n\n"
+                        
+                        decrease_callback = CartCallback(action="change_qty", cart_id=item['cart_id'], quantity=item['quantity'] - 1).pack()
+                        increase_callback = CartCallback(action="change_qty", cart_id=item['cart_id'], quantity=item['quantity'] + 1).pack()
+                        remove_callback = CartCallback(action="remove", cart_id=item['cart_id']).pack()
+                        
+                        keyboard_buttons.append([
+                            InlineKeyboardButton(text="➖", callback_data=decrease_callback),
+                            InlineKeyboardButton(text=f"{item['quantity']}", callback_data="noop"),
+                            InlineKeyboardButton(text="➕", callback_data=increase_callback),
+                            InlineKeyboardButton(text="❌", callback_data=remove_callback)
+                        ])
+                
+                if preorder_cart_items:
+                    text += "<b>Товары предзаказа:</b>\n"
+                    for item in preorder_cart_items:
+                        country_with_flag = get_country_with_flag(item['country'])
+                        final_price = calculate_price_with_markup(item['price'], user_id)
+                        item_price = final_price * item['quantity']
+                        total_price += item_price
+                        text += f"{item['name']}, {country_with_flag}\n"
+                        text += f"Количество: <b>{item['quantity']} шт.</b> × {final_price}₽ = {item_price}₽\n\n"
+                        
+                        decrease_callback = CartCallback(action="change_qty_preorder", cart_id=item['cart_id'], quantity=item['quantity'] - 1).pack()
+                        increase_callback = CartCallback(action="change_qty_preorder", cart_id=item['cart_id'], quantity=item['quantity'] + 1).pack()
+                        remove_callback = CartCallback(action="remove_preorder", cart_id=item['cart_id']).pack()
+                        
+                        keyboard_buttons.append([
+                            InlineKeyboardButton(text="➖", callback_data=decrease_callback),
+                            InlineKeyboardButton(text=f"{item['quantity']}", callback_data="noop"),
+                            InlineKeyboardButton(text="➕", callback_data=increase_callback),
+                            InlineKeyboardButton(text="❌", callback_data=remove_callback)
+                        ])
+                
+                text += f"<b>Итого: {total_price}₽</b>"
+                
+                checkout_callback = CartCallback(action="checkout").pack()
+                keyboard_buttons.append([InlineKeyboardButton(
+                    text="✅ Оформить заказ",
+                    callback_data=checkout_callback
+                )])
+                
+                inline_keyboard = InlineKeyboardMarkup(inline_keyboard=keyboard_buttons)
+                
+                try:
+                    await callback.message.edit_text(
+                        text,
+                        parse_mode='HTML',
+                        reply_markup=inline_keyboard
+                    )
+                except:
+                    await callback.message.answer(
+                        text,
+                        parse_mode='HTML',
+                        reply_markup=inline_keyboard
+                    )
+            else:
+                await callback.answer("❌ Ошибка при удалении товара", show_alert=True)
+        return
     
     if callback_data.action == "change_qty":
         if callback_data.cart_id and callback_data.quantity is not None:
@@ -615,8 +1005,10 @@ async def handle_cart_callback(callback: types.CallbackQuery):
     elif callback_data.action == "checkout":
         print(f"DEBUG: Обработка checkout для user_id={user_id}")
         cart_items = get_cart(user_id)
-        print(f"DEBUG: Товаров в корзине: {len(cart_items) if cart_items else 0}")
-        if not cart_items:
+        preorder_cart_items = get_preorder_cart(user_id)
+        total_items = (len(cart_items) if cart_items else 0) + (len(preorder_cart_items) if preorder_cart_items else 0)
+        print(f"DEBUG: Товаров в корзине: {len(cart_items) if cart_items else 0}, товаров предзаказа: {len(preorder_cart_items) if preorder_cart_items else 0}, всего: {total_items}")
+        if not cart_items and not preorder_cart_items:
             # Показываем alert, так как уже ответили выше
             try:
                 await callback.message.answer("❌ Корзина пуста")
@@ -677,3 +1069,150 @@ async def handle_cart_callback(callback: types.CallbackQuery):
                 await callback.message.answer("❌ Ошибка при оформлении заказа")
             except:
                 pass
+
+# Функция-фильтр для проверки, что это выбор категории предзаказа
+def is_preorder_category_selection(message: types.Message) -> bool:
+    """Проверяет, является ли сообщение выбором категории предзаказа"""
+    if not message.text:
+        return False
+    
+    # Исключаем системные кнопки
+    system_buttons = ["Прайс", "Предзаказ", "Корзина", "Помощь", "Админка", "Назад", 
+                      "📊 Загрузить прайс", "📦 Прайс предзаказа", "⚙️ Настройка наценки",
+                      "📈 Текущая наценка", "📋 Статистика", "🔙 Назад", "📦 Заказы",
+                      "👤 Персональные проценты"]
+    if message.text in system_buttons:
+        return False
+    
+    # Проверяем состояние пользователя
+    user_id = message.from_user.id
+    user_state = user_states.get(user_id, {})
+    
+    # Должно быть в режиме предзаказа и на экране категорий
+    is_preorder = user_state.get('is_preorder', False)
+    screen = user_state.get('screen', '')
+    
+    if not is_preorder or screen != 'preorder_categories':
+        return False
+    
+    # Проверяем, что это не админ (но только если он не в режиме предзаказа)
+    from config import ADMIN_IDS
+    if user_id in ADMIN_IDS:
+        # Админы тоже могут использовать предзаказ, но только если они явно в этом режиме
+        # Проверка уже сделана выше через is_preorder
+        pass
+    
+    # Проверяем, что это действительно категория из предзаказа
+    preorder_categories = get_preorder_categories()
+    if not preorder_categories:
+        return False
+    
+    category_text = message.text
+    
+    # Убираем иконку из текста для сравнения
+    category_clean = category_text
+    for icon in category_icons.values():
+        if category_text.startswith(icon + " "):
+            category_clean = category_text[len(icon) + 1:].strip()
+            break
+    
+    # Проверяем, есть ли такая категория в предзаказе
+    return category_clean in preorder_categories
+
+# Обработчик выбора категории предзаказа (должен быть в конце, после всех специфичных обработчиков)
+@router.message(is_preorder_category_selection)
+async def handle_preorder_category(message: types.Message, state: FSMContext):
+    """Обработчик выбора категории предзаказа"""
+    user_id = message.from_user.id
+    category_text = message.text
+    
+    # Убираем иконку из текста для сравнения
+    category_clean = category_text
+    for icon in category_icons.values():
+        if category_text.startswith(icon + " "):
+            category_clean = category_text[len(icon) + 1:].strip()
+            break
+    
+    # Получаем товары предзаказа по категории (проверка категории уже была в фильтре)
+    products = get_preorder_products_by_category(category_clean)
+    if not products:
+        await message.answer("В этой категории предзаказа пока нет товаров.")
+        return
+    
+    # Сохраняем состояние
+    user_states[user_id] = {
+        'screen': 'preorder_products',
+        'category': category_clean,
+        'is_preorder': True
+    }
+    
+    # Группируем товары по базовой модели
+    category_header = get_category_with_icon(category_clean)
+    grouped_products = OrderedDict()
+    for prod in products:
+        base_model = extract_base_model(prod['name'])
+        if base_model not in grouped_products:
+            grouped_products[base_model] = []
+        grouped_products[base_model].append(prod)
+    
+    # Формируем сообщения с кликабельными ссылками для каждой строки товара
+    header = f"<b>{category_header}</b>\n\n"
+    header += "Нажмите на строку товара, чтобы добавить в корзину предзаказа:\n\n"
+    
+    # Получаем username бота для deep links
+    bot_info = await message.bot.get_me()
+    bot_username = bot_info.username
+    
+    current_text = header
+    current_len = len(header)
+    max_text_len = 3500  # Оставляем запас для текста
+    
+    for base_model, model_products in grouped_products.items():
+        model_header = f"<b>{base_model}</b>\n"
+        
+        # Проверяем, поместится ли заголовок модели
+        if current_len + len(model_header) > max_text_len:
+            # Отправляем текущее сообщение
+            await message.answer(current_text, parse_mode='HTML', disable_web_page_preview=True)
+            # Начинаем новое сообщение
+            current_text = header
+            current_len = len(header)
+        
+        current_text += model_header
+        current_len += len(model_header)
+        
+        for prod in model_products:
+            country_with_flag = get_country_with_flag(prod['country'])
+            final_price = calculate_price_with_markup(prod['price'], user_id)
+            product_text = f"{prod['name']}, {country_with_flag}, {final_price}₽"
+            
+            # Формируем deep link для товара предзаказа
+            deep_link = f"https://t.me/{bot_username}?start=preorder_{prod['id']}"
+            
+            # Добавляем товар как кликабельную ссылку в тексте
+            product_line = f"<a href=\"{deep_link}\">{product_text}</a>\n"
+            
+            if current_len + len(product_line) > max_text_len:
+                # Отправляем текущее сообщение
+                await message.answer(current_text, parse_mode='HTML', disable_web_page_preview=True)
+                # Начинаем новое сообщение
+                current_text = header
+                current_len = len(header)
+            
+            current_text += product_line
+            current_len += len(product_line)
+        
+        current_text += "\n"
+        current_len += 1
+    
+    # Отправляем последнее сообщение
+    if current_len > len(header):
+        await message.answer(current_text, parse_mode='HTML', disable_web_page_preview=True)
+    
+    # Отправляем кнопку "Назад"
+    from aiogram.types import ReplyKeyboardMarkup, KeyboardButton
+    back_keyboard = ReplyKeyboardMarkup(
+        keyboard=[[KeyboardButton(text="Назад")]],
+        resize_keyboard=True
+    )
+    await message.answer("Нажмите на строку товара для добавления в корзину предзаказа", reply_markup=back_keyboard)

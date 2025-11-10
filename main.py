@@ -9,6 +9,8 @@ async def main():
     bot = Bot(token=BOT_TOKEN)
     dp = Dispatcher()
 
+    # Регистрируем user.router первым, чтобы обработчики с StateFilter имели приоритет
+    # Это важно для обработки ввода количества товара
     dp.include_router(user.router)
     dp.include_router(admin.router)
 

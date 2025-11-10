@@ -168,18 +168,33 @@ def get_category_with_icon(category):
 
 def get_main_keyboard():
     keyboard = [
-        [KeyboardButton(text="Прайс"), KeyboardButton(text="Корзина"), KeyboardButton(text="Помощь")],
-        [KeyboardButton(text="Админка")]
+        [KeyboardButton(text="Прайс"), KeyboardButton(text="Предзаказ"), KeyboardButton(text="Корзина")],
+        [KeyboardButton(text="Помощь"), KeyboardButton(text="Админка")]
     ]
     return ReplyKeyboardMarkup(keyboard=keyboard, resize_keyboard=True)
 
-def get_categories_keyboard():
-    """Клавиатура с родительскими категориями"""
+def get_categories_keyboard(source='standard', include_simple=True):
+    """Клавиатура с родительскими категориями, в которых есть товары с указанным source"""
+    from db.crud import get_available_parent_categories
+    
+    # Получаем только те категории, в которых есть товары
+    available_categories = get_available_parent_categories(parent_categories, source)
+    
+    # Если нужно включить и simple формат
+    if include_simple and source == 'standard':
+        available_simple = get_available_parent_categories(parent_categories, 'simple')
+        # Объединяем и убираем дубликаты
+        available_categories = list(set(available_categories + available_simple))
+    
+    if not available_categories:
+        # Если нет доступных категорий, возвращаем пустую клавиатуру с кнопкой "Назад"
+        return ReplyKeyboardMarkup(keyboard=[[KeyboardButton(text="Назад")]], resize_keyboard=True)
+    
     row = []
     keyboard = []
-    for i, cat in enumerate(parent_categories, 1):
+    for i, cat in enumerate(available_categories, 1):
         row.append(KeyboardButton(text=get_category_with_icon(cat)))
-        if i % 3 == 0 or i == len(parent_categories):
+        if i % 3 == 0 or i == len(available_categories):
             keyboard.append(row)
             row = []
     # Добавляем кнопку 'Назад' отдельной строкой
@@ -199,6 +214,22 @@ def get_subcategories_keyboard(parent_category, available_subcats=None):
     for i, subcat in enumerate(subcategories, 1):
         row.append(KeyboardButton(text=get_category_with_icon(subcat)))
         if i % 3 == 0 or i == len(subcategories):
+            keyboard.append(row)
+            row = []
+    # Добавляем кнопку 'Назад' отдельной строкой
+    keyboard.append([KeyboardButton(text="Назад")])
+    return ReplyKeyboardMarkup(keyboard=keyboard, resize_keyboard=True)
+
+def get_preorder_categories_keyboard(categories):
+    """Клавиатура с категориями предзаказа из БД"""
+    if not categories:
+        return ReplyKeyboardMarkup(keyboard=[[KeyboardButton(text="Назад")]], resize_keyboard=True)
+    
+    row = []
+    keyboard = []
+    for i, cat in enumerate(categories, 1):
+        row.append(KeyboardButton(text=get_category_with_icon(cat)))
+        if i % 3 == 0 or i == len(categories):
             keyboard.append(row)
             row = []
     # Добавляем кнопку 'Назад' отдельной строкой

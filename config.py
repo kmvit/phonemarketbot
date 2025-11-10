@@ -1,7 +1,25 @@
 # Конфигурация проекта
+import os
+from dotenv import load_dotenv
 
-BOT_TOKEN = "7531953991:AAFQDMtXPJPufW5E1i43FNDGhrOOL_Fw7jk"
-ADMIN_IDS = [437859088]  # список telegram ID админов
-DATABASE_PATH = "phonemarketbot.db"
-DEFAULT_MARKUP_PERCENT = 10  # стандартная наценка, %
-PRICE_UPLOAD_DIR = "data/samples"  # куда сохраняются загруженные price-файлы
+# Загружаем переменные окружения из .env файла
+load_dotenv()
+
+# Токен бота
+BOT_TOKEN = os.getenv("BOT_TOKEN", "")
+
+# Список ID администраторов (формат в .env: "123456789,987654321" или "123456789")
+admin_ids_str = os.getenv("ADMIN_IDS", "")
+if admin_ids_str:
+    ADMIN_IDS = [int(admin_id.strip()) for admin_id in admin_ids_str.split(",") if admin_id.strip()]
+else:
+    ADMIN_IDS = []
+
+# Путь к базе данных
+DATABASE_PATH = os.getenv("DATABASE_PATH", "phonemarketbot.db")
+
+# Стандартная наценка (сумма в рублях)
+DEFAULT_MARKUP_AMOUNT = int(os.getenv("DEFAULT_MARKUP_AMOUNT", "0"))
+
+# Директория для загруженных прайс-листов
+PRICE_UPLOAD_DIR = os.getenv("PRICE_UPLOAD_DIR", "data/samples")

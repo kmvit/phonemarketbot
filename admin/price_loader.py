@@ -1,7 +1,7 @@
 import pandas as pd
 import re
 from db.models import get_db
-from admin.discount import get_markup_percent
+from admin.discount import get_markup_amount
 
 # Список всех поддерживаемых флагов стран
 SUPPORTED_COUNTRY_FLAGS = [
@@ -507,10 +507,10 @@ def parse_price(price_str):
     except:
         return None
 
-def load_price_from_excel(file_path, markup_percent=None):
+def load_price_from_excel(file_path, markup_amount=None, source='standard'):
     """Загружает прайс из Excel файла в базу данных"""
-    if markup_percent is None:
-        markup_percent = get_markup_percent()
+    if markup_amount is None:
+        markup_amount = get_markup_amount()
     
     try:
         df = pd.read_excel(file_path)
@@ -523,7 +523,7 @@ def load_price_from_excel(file_path, markup_percent=None):
             cur = conn.cursor()
             
             # Очищаем старые данные только этого типа прайса перед загрузкой нового
-            cur.execute("DELETE FROM products WHERE source = 'standard'")
+            cur.execute("DELETE FROM products WHERE source = ?", (source,))
             
             for idx, row in df.iterrows():
                 # Проверяем количество колонок в строке
@@ -584,7 +584,7 @@ def load_price_from_excel(file_path, markup_percent=None):
                         continue
                     
                     # Применяем наценку
-                    final_price = int(price * (1 + markup_percent / 100))
+                    final_price = int(price + markup_amount)
                     
                     # Формируем полное название товара
                     full_name = re.sub(r'[📱⌚🔳💻🖥🎧⌨️🖊]', '', current_product_name).strip()
@@ -594,7 +594,7 @@ def load_price_from_excel(file_path, markup_percent=None):
                         cur.execute("""
                             INSERT INTO products (category, name, memory, color, country, price, source)
                             VALUES (?, ?, ?, ?, ?, ?, ?)
-                        """, (current_category, full_name, memory, color, country, final_price, 'standard'))
+                        """, (current_category, full_name, memory, color, country, final_price, source))
                         
                         products_loaded += 1
                     except Exception as e:
@@ -630,14 +630,14 @@ def detect_file_format(file_path):
         # По умолчанию пытаемся стандартный формат
         return 'standard'
 
-def load_price_from_excel_simple_format(file_path, markup_percent=None):
+def load_price_from_excel_simple_format(file_path, markup_amount=None, source='simple'):
     """
     Загружает прайс из Excel файла с простым форматом: два столбца (название, цена).
     В названии заложены: память, цвет и страна (флаг).
     Формат: "Google Pixel 6 256 Sorta Seafoam🇯🇵" -> память: 256 Gb, цвет: Sorta Seafoam, страна: 🇯🇵
     """
-    if markup_percent is None:
-        markup_percent = get_markup_percent()
+    if markup_amount is None:
+        markup_amount = get_markup_amount()
     
     try:
         df = pd.read_excel(file_path)
@@ -653,7 +653,7 @@ def load_price_from_excel_simple_format(file_path, markup_percent=None):
             cur = conn.cursor()
             
             # Очищаем старые данные только этого типа прайса перед загрузкой нового
-            cur.execute("DELETE FROM products WHERE source = 'simple'")
+            cur.execute("DELETE FROM products WHERE source = ?", (source,))
             
             for idx, row in df.iterrows():
                 # Проверяем количество колонок в строке
@@ -704,7 +704,7 @@ def load_price_from_excel_simple_format(file_path, markup_percent=None):
                     continue
                 
                 # Применяем наценку
-                final_price = int(price * (1 + markup_percent / 100))
+                final_price = int(price + markup_amount)
                 
                 # Убираем флаг и лишние пробелы из названия для сохранения
                 # Оставляем только название модели с памятью и цветом (без флага)
@@ -719,7 +719,7 @@ def load_price_from_excel_simple_format(file_path, markup_percent=None):
                     cur.execute("""
                         INSERT INTO products (category, name, memory, color, country, price, source)
                         VALUES (?, ?, ?, ?, ?, ?, ?)
-                    """, (category, clean_name, memory, color, country, final_price, 'simple'))
+                    """, (category, clean_name, memory, color, country, final_price, source))
                     
                     products_loaded += 1
                 except Exception as e:
@@ -734,7 +734,7 @@ def load_price_from_excel_simple_format(file_path, markup_percent=None):
         error_msg = str(e)
         raise Exception(f"Ошибка при загрузке прайса: {error_msg}")
 
-def load_price_from_excel_auto(file_path, markup_percent=None):
+def load_price_from_excel_auto(file_path, markup_amount=None, source='standard'):
     """
     Автоматически определяет формат файла и загружает прайс.
     Поддерживает два формата:
@@ -744,7 +744,231 @@ def load_price_from_excel_auto(file_path, markup_percent=None):
     file_format = detect_file_format(file_path)
     
     if file_format == 'simple':
-        return load_price_from_excel_simple_format(file_path, markup_percent)
+        # Для простого формата используем source как есть (может быть 'preorder' или 'simple')
+        return load_price_from_excel_simple_format(file_path, markup_amount, source)
     else:
-        return load_price_from_excel(file_path, markup_percent)
+        # Для стандартного формата используем source как есть (может быть 'preorder' или 'standard')
+        return load_price_from_excel(file_path, markup_amount, source)
+
+def load_preorder_price_from_excel(file_path, markup_amount=None):
+    """Загружает прайс предзаказа из Excel файла в таблицу preorder_products"""
+    if markup_amount is None:
+        markup_amount = get_markup_amount()
+    
+    try:
+        df = pd.read_excel(file_path)
+        
+        current_category = None
+        current_product_name = None
+        products_loaded = 0
+        
+        with get_db() as conn:
+            cur = conn.cursor()
+            
+            # Очищаем старые данные предзаказа перед загрузкой нового
+            cur.execute("DELETE FROM preorder_products")
+            
+            for idx, row in df.iterrows():
+                # Проверяем количество колонок в строке
+                num_cols = len(row)
+                if num_cols == 0:
+                    continue
+                
+                # Первая колонка - название товара
+                col1 = row.iloc[0] if num_cols > 0 else None
+                
+                if pd.notna(col1):
+                    col1_str = str(col1)
+                    # Проверяем, является ли это заголовком товара (с эмодзи)
+                    if any(emoji in col1_str for emoji in ['📱', '⌚', '🔳', '💻', '🖥', '🎧', '⌨️', '🖊']):
+                        # Это новый товар
+                        current_product_name = col1_str
+                        current_category = extract_category(col1_str)
+                        continue
+                
+                # Если есть категория и название товара, обрабатываем строку с данными
+                if current_category and current_product_name:
+                    # Безопасно извлекаем данные из строки с проверкой индексов
+                    model_code = None
+                    country_flag = None
+                    stock = None
+                    price_str = None
+                    quantity = None
+                    
+                    if num_cols > 0:
+                        model_code = str(row.iloc[0]) if pd.notna(row.iloc[0]) else None
+                    if num_cols > 1:
+                        # Колонка B (индекс 1) - страна с флагом
+                        country_flag_raw = row.iloc[1]
+                        if pd.notna(country_flag_raw):
+                            country_flag = str(country_flag_raw).strip()
+                        else:
+                            country_flag = None
+                    if num_cols > 2:
+                        stock = str(row.iloc[2]) if pd.notna(row.iloc[2]) else None
+                    if num_cols > 3:
+                        # Колонка D (индекс 3) - цена
+                        price_str = row.iloc[3] if pd.notna(row.iloc[3]) else None
+                    if num_cols > 4:
+                        # Колонка E (индекс 4) - количество
+                        quantity = row.iloc[4] if pd.notna(row.iloc[4]) else None
+                    
+                    # Проверяем, что это не пустая строка и есть модель
+                    if not model_code or model_code == 'nan' or model_code == 'None':
+                        continue
+                    
+                    # Извлекаем данные
+                    memory = extract_memory(current_product_name)
+                    color = extract_color(current_product_name)
+                    country = parse_country(country_flag)
+                    price = parse_price(price_str)
+                    
+                    if price is None:
+                        continue
+                    
+                    # Применяем наценку
+                    final_price = int(price + markup_amount)
+                    
+                    # Формируем полное название товара
+                    full_name = re.sub(r'[📱⌚🔳💻🖥🎧⌨️🖊]', '', current_product_name).strip()
+                    
+                    # Сохраняем в БД предзаказа
+                    try:
+                        cur.execute("""
+                            INSERT INTO preorder_products (category, name, memory, color, country, price)
+                            VALUES (?, ?, ?, ?, ?, ?)
+                        """, (current_category, full_name, memory, color, country, final_price))
+                        
+                        products_loaded += 1
+                    except Exception as e:
+                        # Пропускаем проблемные записи, но продолжаем обработку
+                        continue
+            
+            conn.commit()
+        
+        return products_loaded
+    
+    except Exception as e:
+        # Упрощенное сообщение об ошибке
+        error_msg = str(e)
+        if "out-of-bounds" in error_msg:
+            error_msg = "Ошибка: файл имеет неожиданную структуру. Проверьте, что файл содержит все необходимые колонки."
+        raise Exception(f"Ошибка при загрузке прайса предзаказа: {error_msg}")
+
+def load_preorder_price_from_excel_simple_format(file_path, markup_amount=None):
+    """
+    Загружает прайс предзаказа из Excel файла с простым форматом: два столбца (название, цена).
+    В названии заложены: память, цвет и страна (флаг).
+    """
+    if markup_amount is None:
+        markup_amount = get_markup_amount()
+    
+    try:
+        df = pd.read_excel(file_path)
+        
+        products_loaded = 0
+        
+        # Список заголовков категорий, которые нужно пропускать
+        category_headers = ['YANDEX', 'META', 'NINTENDO', 'VALVE', 'SONY', 'GOOGLE', 
+                           'GOPRO', 'INSTA360', 'HONOR', 'HUAWEI', 'APPLE', 'SAMSUNG',
+                           'XIAOMI', 'VIVO', 'REALME', 'GARMIN']
+        
+        with get_db() as conn:
+            cur = conn.cursor()
+            
+            # Очищаем старые данные предзаказа перед загрузкой нового
+            cur.execute("DELETE FROM preorder_products")
+            
+            for idx, row in df.iterrows():
+                # Проверяем количество колонок в строке
+                num_cols = len(row)
+                if num_cols < 2:
+                    continue
+                
+                # Первая колонка - название товара (с памятью, цветом и флагом страны)
+                product_name = row.iloc[0] if pd.notna(row.iloc[0]) else None
+                
+                # Вторая колонка - цена
+                price_str = row.iloc[1] if pd.notna(row.iloc[1]) else None
+                
+                if not product_name or pd.isna(product_name):
+                    continue
+                
+                product_name_str = str(product_name).strip()
+                
+                # Пропускаем пустые строки и строки с "None" или "nan"
+                if not product_name_str or product_name_str.lower() in ('nan', 'none'):
+                    continue
+                
+                # Пропускаем заголовки категорий (все заглавные буквы, без цены)
+                price_is_none = pd.isna(price_str) if price_str is not None else True
+                if price_str is not None and str(price_str).strip().lower() in ('nan', 'none'):
+                    price_is_none = True
+                if product_name_str.upper() in category_headers and price_is_none:
+                    continue
+                
+                # Извлекаем данные из названия
+                memory = extract_memory(product_name_str)
+                color = extract_color(product_name_str)
+                country_flag = extract_country_flag_from_name(product_name_str)
+                
+                # Если флаг не найден, используем "Не указано"
+                if not country_flag:
+                    country = '🌍 Не указано'
+                else:
+                    country = country_flag
+                
+                # Определяем категорию
+                category = extract_category(product_name_str)
+                
+                # Парсим цену
+                price = parse_price(price_str)
+                
+                if price is None:
+                    continue
+                
+                # Применяем наценку
+                final_price = int(price + markup_amount)
+                
+                # Убираем флаг и лишние пробелы из названия для сохранения
+                # Оставляем только название модели с памятью и цветом (без флага)
+                clean_name = product_name_str
+                # Убираем флаги
+                for flag in SUPPORTED_COUNTRY_FLAGS:
+                    clean_name = clean_name.replace(flag, '')
+                clean_name = re.sub(r'\s+', ' ', clean_name).strip()
+                
+                # Сохраняем в БД предзаказа
+                try:
+                    cur.execute("""
+                        INSERT INTO preorder_products (category, name, memory, color, country, price)
+                        VALUES (?, ?, ?, ?, ?, ?)
+                    """, (category, clean_name, memory, color, country, final_price))
+                    
+                    products_loaded += 1
+                except Exception as e:
+                    # Пропускаем проблемные записи, но продолжаем обработку
+                    continue
+            
+            conn.commit()
+        
+        return products_loaded
+    
+    except Exception as e:
+        error_msg = str(e)
+        raise Exception(f"Ошибка при загрузке прайса предзаказа: {error_msg}")
+
+def load_preorder_price_from_excel_auto(file_path, markup_amount=None):
+    """
+    Автоматически определяет формат файла и загружает прайс предзаказа.
+    Поддерживает два формата:
+    1. Стандартный (много столбцов с заголовками)
+    2. Простой (2 столбца: название с памятью/цветом/флагом, цена)
+    """
+    file_format = detect_file_format(file_path)
+    
+    if file_format == 'simple':
+        return load_preorder_price_from_excel_simple_format(file_path, markup_amount)
+    else:
+        return load_preorder_price_from_excel(file_path, markup_amount)
 
