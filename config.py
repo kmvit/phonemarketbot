@@ -21,5 +21,8 @@ DATABASE_PATH = os.getenv("DATABASE_PATH", "phonemarketbot.db")
 # Стандартная наценка (сумма в рублях)
 DEFAULT_MARKUP_AMOUNT = int(os.getenv("DEFAULT_MARKUP_AMOUNT", "0"))
 
+# Стандартная наценка для предзаказа (сумма в рублях)
+DEFAULT_PREORDER_MARKUP_AMOUNT = int(os.getenv("DEFAULT_PREORDER_MARKUP_AMOUNT", "0"))
+
 # Директория для загруженных прайс-листов
 PRICE_UPLOAD_DIR = os.getenv("PRICE_UPLOAD_DIR", "data/samples")

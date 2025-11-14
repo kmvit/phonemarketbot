@@ -73,7 +73,30 @@ def get_all_user_markups():
             } for row in rows
         ]
 
-def calculate_price_with_markup(base_price, user_id=None):
+def get_preorder_markup_amount():
+    """Получить текущую сумму наценки для предзаказа"""
+    with get_db() as conn:
+        cur = conn.cursor()
+        cur.execute("SELECT value FROM settings WHERE key = 'preorder_markup_amount'")
+        row = cur.fetchone()
+        if row:
+            try:
+                return float(row[0])
+            except:
+                return 0.0
+        return 0.0
+
+def set_preorder_markup_amount(amount):
+    """Установить сумму наценки для предзаказа"""
+    with get_db() as conn:
+        cur = conn.cursor()
+        cur.execute("""
+            INSERT OR REPLACE INTO settings (key, value) 
+            VALUES ('preorder_markup_amount', ?)
+        """, (str(amount),))
+        conn.commit()
+
+def calculate_price_with_markup(base_price, user_id=None, is_preorder=False):
     """Рассчитать цену с учетом персональной суммы наценки пользователя"""
     if user_id:
         user_markup = get_user_markup_amount(user_id)
@@ -81,7 +104,10 @@ def calculate_price_with_markup(base_price, user_id=None):
             # Применяем персональную сумму к базовой цене
             return int(base_price + user_markup)
     
-    # Применяем стандартную наценку
-    markup_amount = get_markup_amount()
+    # Применяем стандартную наценку (для предзаказа или обычного прайса)
+    if is_preorder:
+        markup_amount = get_preorder_markup_amount()
+    else:
+        markup_amount = get_markup_amount()
     return int(base_price + markup_amount)
 

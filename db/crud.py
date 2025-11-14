@@ -1,6 +1,15 @@
 from db.models import get_db
 from admin.discount import calculate_price_with_markup
 
+def get_country_with_flag(country):
+    """Возвращает страну с флагом (всегда возвращает как есть, так как в БД уже сохранен флаг)"""
+    if not country:
+        return "🌍 Не указано"
+    
+    country_str = str(country).strip()
+    # Возвращаем как есть, так как при загрузке прайса уже добавляется флаг через маппинг
+    return country_str
+
 def get_products_by_category(category, source='standard'):
     """Получает товары по категории с фильтрацией по source"""
     with get_db() as conn:
@@ -243,7 +252,7 @@ def create_order(user_id, user_username, user_first_name, user_last_name):
         # Вычисляем общую стоимость с учетом персонального процента пользователя
         total_price = 0
         for item in all_items:
-            final_price = calculate_price_with_markup(item['price'], user_id)
+            final_price = calculate_price_with_markup(item['price'], user_id, is_preorder=item['is_preorder'])
             total_price += final_price * item['quantity']
         
         # Создаем заказ
@@ -255,9 +264,11 @@ def create_order(user_id, user_username, user_first_name, user_last_name):
         
         # Добавляем позиции заказа с учетом персонального процента
         for item in all_items:
-            final_price = calculate_price_with_markup(item['price'], user_id)
-            # Добавляем пометку о предзаказе в название товара
-            product_name = item['name']
+            final_price = calculate_price_with_markup(item['price'], user_id, is_preorder=item['is_preorder'])
+            # Формируем название товара с флагом страны (как в корзине)
+            country_with_flag = get_country_with_flag(item['country'])
+            product_name = f"{item['name']}, {country_with_flag}"
+            # Добавляем пометку о предзаказе в начало названия товара
             if item['is_preorder']:
                 product_name = f"[ПРЕДЗАКАЗ] {product_name}"
             cur.execute("""

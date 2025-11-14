@@ -96,7 +96,7 @@ async def cmd_start(message: types.Message, state: FSMContext):
                 
                 # Показываем товар и запрашиваем количество
                 country_with_flag = get_country_with_flag(product['country'])
-                final_price = calculate_price_with_markup(product['price'], user_id)
+                final_price = calculate_price_with_markup(product['price'], user_id, is_preorder=True)
                 
                 await message.answer(
                     f"📦 <b>Товар предзаказа:</b>\n\n"
@@ -193,20 +193,28 @@ async def show_preorder_info(message: types.Message, state: FSMContext):
     
     # Отправляем информационное сообщение о предзаказе
     preorder_text = (
-        "📦 <b>Предзаказ</b>\n\n"
-        "Вместе с выгодной ценой вы получаете 1 год гарантии.\n\n"
+        "<b>Предзаказ BBSTORE</b>\n\n"
+        "У вас есть возможность оформить предзаказ и выбрать расширенную гарантию — до 1 года за дополнительную плату. Все детали можно уточнить у администратора после оформления.\n\n"
         "<b>Условия предзаказа:</b>\n"
         "• Оплата: задаток 40%\n"
-        "• Срок: 2–7 дней, обычно до 3 дней\n"
+        "• Срок поставки: 2–7 дней (обычно до 3 дней)\n"
         "• Выдача: в нашем магазине\n\n"
-        "<b>Прозрачность:</b>\n"
-        "• Цена фиксируется при оформлении\n"
-        "• Все детали (регион, цвет, характеристики, возможные доп. расходы) обсуждаются заранее\n"
-        "• Перед подтверждением вы получаете полный расчёт\n"
-        "• Задаток обязателен для фиксации цены\n\n"
-        "<b>Дополнительно:</b>\n"
-        "• Уведомим, когда заказ будет готов\n"
-        "• Можем помочь с выбором и предложить аксессуары"
+        "⸻\n\n"
+        "Обращаем ваше внимание, что сроки выполнения предзаказа могут изменяться по причинам, не зависящим от магазина.\n"
+        "К таким причинам относятся:\n"
+        "• задержки у поставщика или логистических служб;\n"
+        "• отсутствие нужной модели или партии товара;\n"
+        "• таможенные или транспортные задержки;\n"
+        "• производственные ограничения или прекращение выпуска устройства.\n\n"
+        "Мы заранее предупреждаем, что в отдельных случаях предзаказ может быть перенесён или отменён поставщиком.\n"
+        "Если выполнение предзаказа становится невозможным, мы уведомляем покупателя и возвращаем уплаченный задаток в полном объёме.\n\n"
+        "⸻\n\n"
+        "📦 <b>Если вы находитесь не в Москве</b>\n\n"
+        "Для покупателей из регионов доступна услуга подготовки и передачи заказа:\n"
+        "• аккуратно собираем и упаковываем товар;\n"
+        "• можем передать заказ вашему курьеру;\n"
+        "• можем доставить его к автобусу, поезду, самолёту или в выбранную вами транспортную компанию.\n\n"
+        "Все детали отправки и передачи заказа обсуждаются заранее с менеджером."
     )
     
     # Получаем категории предзаказа из БД
@@ -420,6 +428,7 @@ async def show_products_by_category(message: types.Message):
     current_text = header
     current_len = len(header)
     max_text_len = 3500  # Оставляем запас для текста
+    is_first_message = True  # Флаг для первого сообщения
     
     for base_model, model_products in grouped_products.items():
         model_header = f"<b>{base_model}</b>\n"
@@ -428,9 +437,10 @@ async def show_products_by_category(message: types.Message):
         if current_len + len(model_header) > max_text_len:
             # Отправляем текущее сообщение
             await message.answer(current_text, parse_mode='HTML', disable_web_page_preview=True)
-            # Начинаем новое сообщение
-            current_text = header
-            current_len = len(header)
+            # Начинаем новое сообщение без заголовка категории
+            current_text = ""
+            current_len = 0
+            is_first_message = False
         
         current_text += model_header
         current_len += len(model_header)
@@ -449,9 +459,10 @@ async def show_products_by_category(message: types.Message):
             if current_len + len(product_line) > max_text_len:
                 # Отправляем текущее сообщение
                 await message.answer(current_text, parse_mode='HTML', disable_web_page_preview=True)
-                # Начинаем новое сообщение
-                current_text = header
-                current_len = len(header)
+                # Начинаем новое сообщение без заголовка категории
+                current_text = ""
+                current_len = 0
+                is_first_message = False
             
             current_text += product_line
             current_len += len(product_line)
@@ -528,7 +539,8 @@ async def process_quantity(message: types.Message, state: FSMContext):
             cart_type = "корзину"
         
         country_with_flag = get_country_with_flag(product['country'])
-        final_price = calculate_price_with_markup(product['price'], user_id)
+        # Применяем правильную наценку в зависимости от типа товара
+        final_price = calculate_price_with_markup(product['price'], user_id, is_preorder=is_preorder)
         
         # Очищаем состояние
         await state.clear()
@@ -605,7 +617,7 @@ async def show_cart(message: types.Message, state: FSMContext):
         text += "<b>Товары предзаказа:</b>\n"
         for item in preorder_cart_items:
             country_with_flag = get_country_with_flag(item['country'])
-            final_price = calculate_price_with_markup(item['price'], user_id)
+            final_price = calculate_price_with_markup(item['price'], user_id, is_preorder=True)
             item_price = final_price * item['quantity']
             total_price += item_price
             text += f"{item['name']}, {country_with_flag}\n"
@@ -724,7 +736,7 @@ async def handle_cart_callback(callback: types.CallbackQuery):
                 text += "<b>Товары предзаказа:</b>\n"
                 for item in preorder_cart_items:
                     country_with_flag = get_country_with_flag(item['country'])
-                    final_price = calculate_price_with_markup(item['price'], user_id)
+                    final_price = calculate_price_with_markup(item['price'], user_id, is_preorder=True)
                     item_price = final_price * item['quantity']
                     total_price += item_price
                     text += f"{item['name']}, {country_with_flag}\n"
@@ -812,7 +824,7 @@ async def handle_cart_callback(callback: types.CallbackQuery):
                     text += "<b>Товары предзаказа:</b>\n"
                     for item in preorder_cart_items:
                         country_with_flag = get_country_with_flag(item['country'])
-                        final_price = calculate_price_with_markup(item['price'], user_id)
+                        final_price = calculate_price_with_markup(item['price'], user_id, is_preorder=True)
                         item_price = final_price * item['quantity']
                         total_price += item_price
                         text += f"{item['name']}, {country_with_flag}\n"
@@ -1166,6 +1178,7 @@ async def handle_preorder_category(message: types.Message, state: FSMContext):
     current_text = header
     current_len = len(header)
     max_text_len = 3500  # Оставляем запас для текста
+    is_first_message = True  # Флаг для первого сообщения
     
     for base_model, model_products in grouped_products.items():
         model_header = f"<b>{base_model}</b>\n"
@@ -1174,16 +1187,17 @@ async def handle_preorder_category(message: types.Message, state: FSMContext):
         if current_len + len(model_header) > max_text_len:
             # Отправляем текущее сообщение
             await message.answer(current_text, parse_mode='HTML', disable_web_page_preview=True)
-            # Начинаем новое сообщение
-            current_text = header
-            current_len = len(header)
+            # Начинаем новое сообщение без заголовка категории
+            current_text = ""
+            current_len = 0
+            is_first_message = False
         
         current_text += model_header
         current_len += len(model_header)
         
         for prod in model_products:
             country_with_flag = get_country_with_flag(prod['country'])
-            final_price = calculate_price_with_markup(prod['price'], user_id)
+            final_price = calculate_price_with_markup(prod['price'], user_id, is_preorder=True)
             product_text = f"{prod['name']}, {country_with_flag}, {final_price}₽"
             
             # Формируем deep link для товара предзаказа
@@ -1195,9 +1209,10 @@ async def handle_preorder_category(message: types.Message, state: FSMContext):
             if current_len + len(product_line) > max_text_len:
                 # Отправляем текущее сообщение
                 await message.answer(current_text, parse_mode='HTML', disable_web_page_preview=True)
-                # Начинаем новое сообщение
-                current_text = header
-                current_len = len(header)
+                # Начинаем новое сообщение без заголовка категории
+                current_text = ""
+                current_len = 0
+                is_first_message = False
             
             current_text += product_line
             current_len += len(product_line)

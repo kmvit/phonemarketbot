@@ -1,7 +1,7 @@
 import pandas as pd
 import re
 from db.models import get_db
-from admin.discount import get_markup_amount
+from admin.discount import get_markup_amount, get_preorder_markup_amount
 
 # Список всех поддерживаемых флагов стран
 SUPPORTED_COUNTRY_FLAGS = [
@@ -583,9 +583,7 @@ def load_price_from_excel(file_path, markup_amount=None, source='standard'):
                     if price is None:
                         continue
                     
-                    # Применяем наценку
-                    final_price = int(price + markup_amount)
-                    
+                    # Сохраняем базовую цену БЕЗ наценки (наценка будет применяться при отображении)
                     # Формируем полное название товара
                     full_name = re.sub(r'[📱⌚🔳💻🖥🎧⌨️🖊]', '', current_product_name).strip()
                     
@@ -594,7 +592,7 @@ def load_price_from_excel(file_path, markup_amount=None, source='standard'):
                         cur.execute("""
                             INSERT INTO products (category, name, memory, color, country, price, source)
                             VALUES (?, ?, ?, ?, ?, ?, ?)
-                        """, (current_category, full_name, memory, color, country, final_price, source))
+                        """, (current_category, full_name, memory, color, country, price, source))
                         
                         products_loaded += 1
                     except Exception as e:
@@ -703,9 +701,7 @@ def load_price_from_excel_simple_format(file_path, markup_amount=None, source='s
                 if price is None:
                     continue
                 
-                # Применяем наценку
-                final_price = int(price + markup_amount)
-                
+                # Сохраняем базовую цену БЕЗ наценки (наценка будет применяться при отображении)
                 # Убираем флаг и лишние пробелы из названия для сохранения
                 # Оставляем только название модели с памятью и цветом (без флага)
                 clean_name = product_name_str
@@ -719,7 +715,7 @@ def load_price_from_excel_simple_format(file_path, markup_amount=None, source='s
                     cur.execute("""
                         INSERT INTO products (category, name, memory, color, country, price, source)
                         VALUES (?, ?, ?, ?, ?, ?, ?)
-                    """, (category, clean_name, memory, color, country, final_price, source))
+                    """, (category, clean_name, memory, color, country, price, source))
                     
                     products_loaded += 1
                 except Exception as e:
@@ -753,7 +749,7 @@ def load_price_from_excel_auto(file_path, markup_amount=None, source='standard')
 def load_preorder_price_from_excel(file_path, markup_amount=None):
     """Загружает прайс предзаказа из Excel файла в таблицу preorder_products"""
     if markup_amount is None:
-        markup_amount = get_markup_amount()
+        markup_amount = get_preorder_markup_amount()
     
     try:
         df = pd.read_excel(file_path)
@@ -826,9 +822,7 @@ def load_preorder_price_from_excel(file_path, markup_amount=None):
                     if price is None:
                         continue
                     
-                    # Применяем наценку
-                    final_price = int(price + markup_amount)
-                    
+                    # Сохраняем базовую цену БЕЗ наценки (наценка будет применяться при отображении)
                     # Формируем полное название товара
                     full_name = re.sub(r'[📱⌚🔳💻🖥🎧⌨️🖊]', '', current_product_name).strip()
                     
@@ -837,7 +831,7 @@ def load_preorder_price_from_excel(file_path, markup_amount=None):
                         cur.execute("""
                             INSERT INTO preorder_products (category, name, memory, color, country, price)
                             VALUES (?, ?, ?, ?, ?, ?)
-                        """, (current_category, full_name, memory, color, country, final_price))
+                        """, (current_category, full_name, memory, color, country, price))
                         
                         products_loaded += 1
                     except Exception as e:
@@ -861,7 +855,7 @@ def load_preorder_price_from_excel_simple_format(file_path, markup_amount=None):
     В названии заложены: память, цвет и страна (флаг).
     """
     if markup_amount is None:
-        markup_amount = get_markup_amount()
+        markup_amount = get_preorder_markup_amount()
     
     try:
         df = pd.read_excel(file_path)
@@ -927,9 +921,7 @@ def load_preorder_price_from_excel_simple_format(file_path, markup_amount=None):
                 if price is None:
                     continue
                 
-                # Применяем наценку
-                final_price = int(price + markup_amount)
-                
+                # Сохраняем базовую цену БЕЗ наценки (наценка будет применяться при отображении)
                 # Убираем флаг и лишние пробелы из названия для сохранения
                 # Оставляем только название модели с памятью и цветом (без флага)
                 clean_name = product_name_str
@@ -943,7 +935,7 @@ def load_preorder_price_from_excel_simple_format(file_path, markup_amount=None):
                     cur.execute("""
                         INSERT INTO preorder_products (category, name, memory, color, country, price)
                         VALUES (?, ?, ?, ?, ?, ?)
-                    """, (category, clean_name, memory, color, country, final_price))
+                    """, (category, clean_name, memory, color, country, price))
                     
                     products_loaded += 1
                 except Exception as e:

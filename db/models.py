@@ -42,11 +42,16 @@ def init_db():
             )
         ''')
         # Устанавливаем дефолтную наценку, если её нет
-        from config import DEFAULT_MARKUP_AMOUNT
+        from config import DEFAULT_MARKUP_AMOUNT, DEFAULT_PREORDER_MARKUP_AMOUNT
         cur.execute('''
             INSERT OR IGNORE INTO settings (key, value) 
             VALUES ('markup_amount', ?)
         ''', (str(DEFAULT_MARKUP_AMOUNT),))
+        # Устанавливаем дефолтную наценку для предзаказа, если её нет
+        cur.execute('''
+            INSERT OR IGNORE INTO settings (key, value) 
+            VALUES ('preorder_markup_amount', ?)
+        ''', (str(DEFAULT_PREORDER_MARKUP_AMOUNT),))
         
         # Таблица корзины
         cur.execute('''

@@ -9,6 +9,7 @@ from admin.markup import get_admin_keyboard
 from admin.price_loader import load_price_from_excel_auto, load_preorder_price_from_excel_auto
 from admin.discount import (
     get_markup_amount, set_markup_amount,
+    get_preorder_markup_amount, set_preorder_markup_amount,
     get_user_markup_amount, set_user_markup_amount,
     delete_user_markup, get_all_user_markups
 )
@@ -23,7 +24,7 @@ router = Router()
 price_upload_states = {}
 
 # Хранилище состояний для установки наценки
-# Формат: {user_id: True/False}
+# Формат: {user_id: 'standard' | 'preorder' | False}
 markup_setting_states = {}
 
 def is_admin(user_id):
@@ -110,10 +111,16 @@ async def handle_price_file(message: types.Message):
             products_count = load_price_from_excel_auto(file_path, source=final_source)
             price_type_text = "обычного"
         
+        # Показываем текущую наценку (она будет применяться при отображении товаров)
+        if price_type == 'preorder':
+            current_markup = get_preorder_markup_amount()
+        else:
+            current_markup = get_markup_amount()
+        
         await message.answer(
             f"✅ <b>Прайс {price_type_text} успешно загружен!</b>\n\n"
             f"Загружено товаров: <b>{products_count}</b>\n"
-            f"Наценка применена: <b>{get_markup_amount()}₽</b>",
+            f"Текущая наценка: <b>{current_markup}₽</b> (применяется при отображении товаров)",
             parse_mode='HTML',
             reply_markup=get_admin_keyboard()
         )
@@ -144,12 +151,29 @@ async def set_markup_prompt(message: types.Message):
         return
     
     user_id = message.from_user.id
-    markup_setting_states[user_id] = True  # Устанавливаем флаг, что админ хочет изменить наценку
+    markup_setting_states[user_id] = 'standard'  # Устанавливаем флаг для обычной наценки
     
     current_markup = get_markup_amount()
     await message.answer(
-        f"⚙️ <b>Настройка наценки</b>\n\n"
+        f"⚙️ <b>Настройка наценки (основной прайс)</b>\n\n"
         f"Текущая наценка: <b>{current_markup}₽</b>\n\n"
+        f"Отправьте новую сумму наценки числом.\n"
+        f"Например: <code>100</code> для наценки 100₽",
+        parse_mode='HTML'
+    )
+
+@router.message(lambda m: m.text == "⚙️ Наценка предзаказа")
+async def set_preorder_markup_prompt(message: types.Message):
+    if not is_admin(message.from_user.id):
+        return
+    
+    user_id = message.from_user.id
+    markup_setting_states[user_id] = 'preorder'  # Устанавливаем флаг для наценки предзаказа
+    
+    current_markup = get_preorder_markup_amount()
+    await message.answer(
+        f"⚙️ <b>Настройка наценки (предзаказ)</b>\n\n"
+        f"Текущая наценка предзаказа: <b>{current_markup}₽</b>\n\n"
         f"Отправьте новую сумму наценки числом.\n"
         f"Например: <code>100</code> для наценки 100₽",
         parse_mode='HTML'
@@ -158,7 +182,7 @@ async def set_markup_prompt(message: types.Message):
 # Функция-фильтр для проверки, что это установка наценки (не ввод количества товара)
 def is_markup_setting(message: types.Message) -> bool:
     """Проверяет, что это установка наценки, а не ввод количества товара"""
-    if not message.text or not message.text.isdigit():
+    if not message.text or not message.text.replace('.', '').isdigit():
         return False
     
     if not is_admin(message.from_user.id):
@@ -166,7 +190,8 @@ def is_markup_setting(message: types.Message) -> bool:
     
     # Проверяем, что админ действительно хочет установить наценку (нажал на кнопку)
     user_id = message.from_user.id
-    if not markup_setting_states.get(user_id, False):
+    markup_state = markup_setting_states.get(user_id, False)
+    if not markup_state:
         return False
     
     return True
@@ -178,6 +203,7 @@ def is_markup_setting(message: types.Message) -> bool:
 async def set_markup_value(message: types.Message, state: FSMContext):
     """Обработчик установки наценки"""
     user_id = message.from_user.id
+    markup_type = markup_setting_states.get(user_id, False)
     
     try:
         amount = float(message.text)
@@ -186,14 +212,19 @@ async def set_markup_value(message: types.Message, state: FSMContext):
             # Не очищаем состояние, чтобы админ мог попробовать еще раз
             return
         
-        set_markup_amount(amount)
+        if markup_type == 'preorder':
+            set_preorder_markup_amount(amount)
+            markup_text = "предзаказа"
+        else:
+            set_markup_amount(amount)
+            markup_text = "основного прайса"
         
         # Очищаем состояние после успешной установки
         if user_id in markup_setting_states:
             del markup_setting_states[user_id]
         
         await message.answer(
-            f"✅ Наценка установлена: <b>{amount}₽</b>\n\n"
+            f"✅ Наценка {markup_text} установлена: <b>{amount}₽</b>\n\n"
             f"Новая наценка будет применяться к новым загрузкам прайса.",
             parse_mode='HTML',
             reply_markup=get_admin_keyboard()
@@ -208,6 +239,7 @@ async def show_current_markup(message: types.Message):
         return
     
     markup = get_markup_amount()
+    preorder_markup = get_preorder_markup_amount()
     
     # Получаем статистику товаров
     with get_db() as conn:
@@ -220,7 +252,8 @@ async def show_current_markup(message: types.Message):
     
     await message.answer(
         f"📈 <b>Статистика</b>\n\n"
-        f"Текущая наценка: <b>{markup}₽</b>\n"
+        f"Наценка основного прайса: <b>{markup}₽</b>\n"
+        f"Наценка предзаказа: <b>{preorder_markup}₽</b>\n"
         f"Товаров в базе: <b>{products_count}</b>\n"
         f"Категорий: <b>{categories_count}</b>",
         parse_mode='HTML',
@@ -253,12 +286,14 @@ async def show_statistics(message: types.Message):
         top_categories = cur.fetchall()
     
     markup = get_markup_amount()
+    preorder_markup = get_preorder_markup_amount()
     
     stats_text = (
         f"📋 <b>Статистика базы данных</b>\n\n"
         f"Всего товаров: <b>{total_products}</b>\n"
         f"Категорий: <b>{total_categories}</b>\n"
-        f"Текущая наценка: <b>{markup}₽</b>\n\n"
+        f"Наценка основного прайса: <b>{markup}₽</b>\n"
+        f"Наценка предзаказа: <b>{preorder_markup}₽</b>\n\n"
         f"<b>Топ-5 категорий:</b>\n"
     )
     
