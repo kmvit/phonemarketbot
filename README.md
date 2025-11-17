@@ -148,6 +148,7 @@ phonemarketbot/
 
 - `BOT_TOKEN` - токен бота от BotFather
 - `ADMIN_IDS` - список ID администраторов (через запятую, например: `123456789,987654321`)
+- `ADMIN_HELP` - ID администратора для ответов пользователям (кнопка "Связаться с администратором")
 - `DATABASE_PATH` - путь к базе данных (по умолчанию: `phonemarketbot.db`)
 - `DEFAULT_MARKUP_AMOUNT` - стандартная наценка в рублях для основного прайса (по умолчанию: `0`)
 - `DEFAULT_PREORDER_MARKUP_AMOUNT` - стандартная наценка в рублях для предзаказа (по умолчанию: `0`)
@@ -157,6 +158,7 @@ phonemarketbot/
 ```
 BOT_TOKEN=your_bot_token_here
 ADMIN_IDS=123456789
+ADMIN_HELP=437859088
 DATABASE_PATH=phonemarketbot.db
 DEFAULT_MARKUP_AMOUNT=0
 DEFAULT_PREORDER_MARKUP_AMOUNT=0

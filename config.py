@@ -26,3 +26,6 @@ DEFAULT_PREORDER_MARKUP_AMOUNT = int(os.getenv("DEFAULT_PREORDER_MARKUP_AMOUNT",
 
 # Директория для загруженных прайс-листов
 PRICE_UPLOAD_DIR = os.getenv("PRICE_UPLOAD_DIR", "data/samples")
+
+# ID администратора для ответов пользователям (кнопка "Связаться с администратором")
+ADMIN_HELP = int(os.getenv("ADMIN_HELP", "0")) if os.getenv("ADMIN_HELP") else None

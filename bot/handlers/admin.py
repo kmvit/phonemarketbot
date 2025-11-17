@@ -314,7 +314,7 @@ async def admin_back(message: types.Message):
     
     await message.answer(
         'Главное меню:',
-        reply_markup=get_main_keyboard()
+        reply_markup=get_main_keyboard(message.from_user.id)
     )
 
 @router.message(lambda m: m.text == "📦 Заказы")

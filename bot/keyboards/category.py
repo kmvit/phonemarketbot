@@ -166,11 +166,19 @@ def get_category_with_icon(category):
     icon = category_icons.get(category, "📦")
     return f"{icon} {category}"
 
-def get_main_keyboard():
+def get_main_keyboard(user_id=None):
+    """Создает главную клавиатуру. Кнопка 'Админка' показывается только администраторам."""
     keyboard = [
         [KeyboardButton(text="Прайс"), KeyboardButton(text="Предзаказ"), KeyboardButton(text="Корзина")],
-        [KeyboardButton(text="Помощь"), KeyboardButton(text="Админка")]
+        [KeyboardButton(text="📞 Связаться с администратором")]
     ]
+    
+    # Добавляем кнопку "Админка" только для администраторов
+    if user_id is not None:
+        from config import ADMIN_IDS
+        if user_id in ADMIN_IDS:
+            keyboard.append([KeyboardButton(text="Админка")])
+    
     return ReplyKeyboardMarkup(keyboard=keyboard, resize_keyboard=True)
 
 def get_categories_keyboard(source='standard', include_simple=True):

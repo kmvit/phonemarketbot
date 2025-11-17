@@ -98,16 +98,36 @@ def set_preorder_markup_amount(amount):
 
 def calculate_price_with_markup(base_price, user_id=None, is_preorder=False):
     """Рассчитать цену с учетом персональной суммы наценки пользователя"""
+    # Получаем стандартную наценку
+    if is_preorder:
+        standard_markup = get_preorder_markup_amount()
+    else:
+        standard_markup = get_markup_amount()
+    
     if user_id:
         user_markup = get_user_markup_amount(user_id)
         if user_markup is not None:
-            # Применяем персональную сумму к базовой цене
-            return int(base_price + user_markup)
+            # Если есть персональная наценка, она должна применяться к базовой цене
+            # Проблема: если товары были загружены со старой логикой, в БД уже есть цена с наценкой
+            # Решение: вычитаем стандартную наценку из цены в БД, чтобы получить базовую цену
+            # Затем применяем персональную наценку
+            
+            # Вычитаем стандартную наценку, чтобы получить базовую цену
+            # (на случай, если товары были загружены со старой логикой)
+            base_price_clean = base_price - standard_markup
+            
+            # Если после вычитания цена стала отрицательной или нулевой,
+            # значит стандартная наценка больше или равна цене - используем цену из БД как есть
+            if base_price_clean <= 0:
+                base_price_clean = base_price
+            # Если цена уменьшилась более чем на 90%, значит что-то не так
+            # (стандартная наценка не должна быть такой большой)
+            elif base_price_clean < base_price * 0.1:
+                base_price_clean = base_price
+            
+            # Применяем персональную наценку к базовой цене
+            return int(base_price_clean + user_markup)
     
     # Применяем стандартную наценку (для предзаказа или обычного прайса)
-    if is_preorder:
-        markup_amount = get_preorder_markup_amount()
-    else:
-        markup_amount = get_markup_amount()
-    return int(base_price + markup_amount)
+    return int(base_price + standard_markup)
 
