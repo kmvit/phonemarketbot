@@ -73,6 +73,39 @@ def extract_base_model(product_name):
     
     return name
 
+def extract_model_with_color(product_name):
+    """Извлекает модель с цветом из названия товара (базовая модель + память + цвет)"""
+    if not product_name:
+        return product_name
+    
+    # Убираем лишние пробелы
+    name = product_name.strip()
+    
+    # Если в названии есть запятая, берем все до первой запятой
+    # (обычно после цвета идет запятая и страна/код модели)
+    if ',' in name:
+        return name.split(',')[0].strip()
+    
+    # Список цветов (от длинных к коротким, чтобы сначала находить составные цвета)
+    colors = ['Space Gray', 'Sp. Gray', 'Rose Gold', 'Jet Black', 'Light Gold', 
+              'Cloud White', 'Sky Blue', 'Space Black', 'Light Blush', 'Pur Fog',
+              'Blue Ocean', 'Green Alpine', 'Black Ocean', 'Mist Blue', 'Mil Lp',
+              'Black', 'Blue', 'Red', 'Midnight', 'Starlight', 'Purple', 'Yellow', 
+              'Green', 'Pink', 'White', 'Silver', 'Gold', 'Teal', 'Ultramarine', 
+              'Desert', 'Natural', 'Lavender', 'Sage', 'Orange', 'Star', 'Mid', 
+              'Plum', 'Ink', 'Nat', 'Denim', 'Link']
+    
+    # Ищем цвет в названии (от длинных к коротким)
+    for color in colors:
+        # Ищем цвет в конце названия (после памяти обычно идет цвет)
+        pattern = r'(.+\s+' + re.escape(color) + r'\b)'
+        match = re.search(pattern, name, re.IGNORECASE)
+        if match:
+            return match.group(1).strip()
+    
+    # Если цвет не найден, возвращаем название как есть
+    return name
+
 @router.message(Command("start"))
 async def cmd_start(message: types.Message, state: FSMContext):
     """Обработчик команды /start с поддержкой deep links для добавления товара"""
@@ -492,14 +525,26 @@ async def show_products_by_category(message: types.Message):
         await message.answer("В этой категории пока нет товаров.")
         return
     
-    # Группируем товары по базовой модели
+    # Группируем товары по базовой модели, затем по цвету
     category_header = get_category_with_icon(subcat)
-    grouped_products = OrderedDict()
+    # Сначала группируем по базовой модели
+    base_model_groups = OrderedDict()
     for prod in products:
         base_model = extract_base_model(prod['name'])
-        if base_model not in grouped_products:
-            grouped_products[base_model] = []
-        grouped_products[base_model].append(prod)
+        if base_model not in base_model_groups:
+            base_model_groups[base_model] = []
+        base_model_groups[base_model].append(prod)
+    
+    # Затем внутри каждой модели группируем по цвету
+    grouped_products = OrderedDict()
+    for base_model, model_products in base_model_groups.items():
+        color_groups = OrderedDict()
+        for prod in model_products:
+            model_with_color = extract_model_with_color(prod['name'])
+            if model_with_color not in color_groups:
+                color_groups[model_with_color] = []
+            color_groups[model_with_color].append(prod)
+        grouped_products[base_model] = color_groups
     
     # Формируем сообщения с кликабельными ссылками для каждой строки товара
     header = f"<b>{category_header}</b>\n\n"
@@ -514,33 +559,13 @@ async def show_products_by_category(message: types.Message):
     max_text_len = 3500  # Оставляем запас для текста
     is_first_message = True  # Флаг для первого сообщения
     
-    for base_model, model_products in grouped_products.items():
-        model_header = f"<b>{base_model}</b>\n"
-        
-        # Проверяем, поместится ли заголовок модели
-        if current_len + len(model_header) > max_text_len:
-            # Отправляем текущее сообщение
-            await message.answer(current_text, parse_mode='HTML', disable_web_page_preview=True)
-            # Начинаем новое сообщение без заголовка категории
-            current_text = ""
-            current_len = 0
-            is_first_message = False
-        
-        current_text += model_header
-        current_len += len(model_header)
-        
-        for prod in model_products:
-            country_with_flag = get_country_with_flag(prod['country'])
-            final_price = calculate_price_with_markup(prod['price'], user_id)
-            product_text = f"{prod['name']}, {country_with_flag}, {final_price}₽"
+    for base_model, color_groups in grouped_products.items():
+        for model_with_color, color_products in color_groups.items():
+            # Заголовок для группы цвета
+            color_header = f"<b>📱 {model_with_color}</b>\n"
             
-            # Формируем deep link для товара
-            deep_link = f"https://t.me/{bot_username}?start=add_{prod['id']}"
-            
-            # Добавляем товар как кликабельную ссылку в тексте
-            product_line = f"<a href=\"{deep_link}\">{product_text}</a>\n"
-            
-            if current_len + len(product_line) > max_text_len:
+            # Проверяем, поместится ли заголовок цвета
+            if current_len + len(color_header) > max_text_len:
                 # Отправляем текущее сообщение
                 await message.answer(current_text, parse_mode='HTML', disable_web_page_preview=True)
                 # Начинаем новое сообщение без заголовка категории
@@ -548,11 +573,37 @@ async def show_products_by_category(message: types.Message):
                 current_len = 0
                 is_first_message = False
             
-            current_text += product_line
-            current_len += len(product_line)
-        
-        current_text += "\n"
-        current_len += 1
+            current_text += color_header
+            current_len += len(color_header)
+            
+            # Сортируем товары внутри группы цвета по стране (или можно по цене)
+            color_products_sorted = sorted(color_products, key=lambda x: (x['country'] or '', x['price']))
+            
+            for prod in color_products_sorted:
+                country_with_flag = get_country_with_flag(prod['country'])
+                final_price = calculate_price_with_markup(prod['price'], user_id)
+                # Формируем текст товара: название, страна, цена
+                product_text = f"{prod['name']}, {country_with_flag}, {final_price}₽"
+                
+                # Формируем deep link для товара
+                deep_link = f"https://t.me/{bot_username}?start=add_{prod['id']}"
+                
+                # Добавляем товар как кликабельную ссылку в тексте
+                product_line = f"<a href=\"{deep_link}\">{product_text}</a>\n"
+                
+                if current_len + len(product_line) > max_text_len:
+                    # Отправляем текущее сообщение
+                    await message.answer(current_text, parse_mode='HTML', disable_web_page_preview=True)
+                    # Начинаем новое сообщение без заголовка категории
+                    current_text = ""
+                    current_len = 0
+                    is_first_message = False
+                
+                current_text += product_line
+                current_len += len(product_line)
+            
+            current_text += "\n"
+            current_len += 1
     
     # Отправляем последнее сообщение
     if current_len > len(header):
@@ -1242,14 +1293,26 @@ async def handle_preorder_category(message: types.Message, state: FSMContext):
         'is_preorder': True
     }
     
-    # Группируем товары по базовой модели
+    # Группируем товары по базовой модели, затем по цвету
     category_header = get_category_with_icon(category_clean)
-    grouped_products = OrderedDict()
+    # Сначала группируем по базовой модели
+    base_model_groups = OrderedDict()
     for prod in products:
         base_model = extract_base_model(prod['name'])
-        if base_model not in grouped_products:
-            grouped_products[base_model] = []
-        grouped_products[base_model].append(prod)
+        if base_model not in base_model_groups:
+            base_model_groups[base_model] = []
+        base_model_groups[base_model].append(prod)
+    
+    # Затем внутри каждой модели группируем по цвету
+    grouped_products = OrderedDict()
+    for base_model, model_products in base_model_groups.items():
+        color_groups = OrderedDict()
+        for prod in model_products:
+            model_with_color = extract_model_with_color(prod['name'])
+            if model_with_color not in color_groups:
+                color_groups[model_with_color] = []
+            color_groups[model_with_color].append(prod)
+        grouped_products[base_model] = color_groups
     
     # Формируем сообщения с кликабельными ссылками для каждой строки товара
     header = f"<b>{category_header}</b>\n\n"
@@ -1264,33 +1327,13 @@ async def handle_preorder_category(message: types.Message, state: FSMContext):
     max_text_len = 3500  # Оставляем запас для текста
     is_first_message = True  # Флаг для первого сообщения
     
-    for base_model, model_products in grouped_products.items():
-        model_header = f"<b>{base_model}</b>\n"
-        
-        # Проверяем, поместится ли заголовок модели
-        if current_len + len(model_header) > max_text_len:
-            # Отправляем текущее сообщение
-            await message.answer(current_text, parse_mode='HTML', disable_web_page_preview=True)
-            # Начинаем новое сообщение без заголовка категории
-            current_text = ""
-            current_len = 0
-            is_first_message = False
-        
-        current_text += model_header
-        current_len += len(model_header)
-        
-        for prod in model_products:
-            country_with_flag = get_country_with_flag(prod['country'])
-            final_price = calculate_price_with_markup(prod['price'], user_id, is_preorder=True)
-            product_text = f"{prod['name']}, {country_with_flag}, {final_price}₽"
+    for base_model, color_groups in grouped_products.items():
+        for model_with_color, color_products in color_groups.items():
+            # Заголовок для группы цвета
+            color_header = f"<b>📱 {model_with_color}</b>\n"
             
-            # Формируем deep link для товара предзаказа
-            deep_link = f"https://t.me/{bot_username}?start=preorder_{prod['id']}"
-            
-            # Добавляем товар как кликабельную ссылку в тексте
-            product_line = f"<a href=\"{deep_link}\">{product_text}</a>\n"
-            
-            if current_len + len(product_line) > max_text_len:
+            # Проверяем, поместится ли заголовок цвета
+            if current_len + len(color_header) > max_text_len:
                 # Отправляем текущее сообщение
                 await message.answer(current_text, parse_mode='HTML', disable_web_page_preview=True)
                 # Начинаем новое сообщение без заголовка категории
@@ -1298,11 +1341,37 @@ async def handle_preorder_category(message: types.Message, state: FSMContext):
                 current_len = 0
                 is_first_message = False
             
-            current_text += product_line
-            current_len += len(product_line)
-        
-        current_text += "\n"
-        current_len += 1
+            current_text += color_header
+            current_len += len(color_header)
+            
+            # Сортируем товары внутри группы цвета по стране (или можно по цене)
+            color_products_sorted = sorted(color_products, key=lambda x: (x['country'] or '', x['price']))
+            
+            for prod in color_products_sorted:
+                country_with_flag = get_country_with_flag(prod['country'])
+                final_price = calculate_price_with_markup(prod['price'], user_id, is_preorder=True)
+                # Формируем текст товара: название, страна, цена
+                product_text = f"{prod['name']}, {country_with_flag}, {final_price}₽"
+                
+                # Формируем deep link для товара предзаказа
+                deep_link = f"https://t.me/{bot_username}?start=preorder_{prod['id']}"
+                
+                # Добавляем товар как кликабельную ссылку в тексте
+                product_line = f"<a href=\"{deep_link}\">{product_text}</a>\n"
+                
+                if current_len + len(product_line) > max_text_len:
+                    # Отправляем текущее сообщение
+                    await message.answer(current_text, parse_mode='HTML', disable_web_page_preview=True)
+                    # Начинаем новое сообщение без заголовка категории
+                    current_text = ""
+                    current_len = 0
+                    is_first_message = False
+                
+                current_text += product_line
+                current_len += len(product_line)
+            
+            current_text += "\n"
+            current_len += 1
     
     # Отправляем последнее сообщение
     if current_len > len(header):
