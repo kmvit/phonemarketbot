@@ -7,6 +7,7 @@ def get_admin_keyboard():
         [KeyboardButton(text="⚙️ Настройка наценки"), KeyboardButton(text="📈 Текущая наценка")],
         [KeyboardButton(text="⚙️ Наценка предзаказа"), KeyboardButton(text="📋 Статистика")],
         [KeyboardButton(text="👤 Персональные проценты"), KeyboardButton(text="📦 Заказы")],
+        [KeyboardButton(text="🗑️ Очистить базу от товаров")],
         [KeyboardButton(text="🔙 Назад")]
     ]
     return ReplyKeyboardMarkup(keyboard=keyboard, resize_keyboard=True)

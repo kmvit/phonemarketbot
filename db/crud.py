@@ -517,3 +517,30 @@ def clear_preorder_cart(user_id):
         """, (user_id,))
         conn.commit()
         return True
+
+def clear_all_products():
+    """Очищает все товары из базы данных (основной прайс и предзаказ)"""
+    with get_db() as conn:
+        cur = conn.cursor()
+        
+        # Получаем количество товаров до удаления для статистики
+        cur.execute("SELECT COUNT(*) FROM products")
+        products_count = cur.fetchone()[0]
+        
+        cur.execute("SELECT COUNT(*) FROM preorder_products")
+        preorder_products_count = cur.fetchone()[0]
+        
+        # Удаляем все товары
+        cur.execute("DELETE FROM products")
+        cur.execute("DELETE FROM preorder_products")
+        
+        # Также очищаем корзины, так как товары больше не существуют
+        cur.execute("DELETE FROM cart")
+        cur.execute("DELETE FROM preorder_cart")
+        
+        conn.commit()
+        
+        return {
+            "products_deleted": products_count,
+            "preorder_products_deleted": preorder_products_count
+        }

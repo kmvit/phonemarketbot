@@ -15,7 +15,7 @@ from admin.discount import (
 )
 from bot.keyboards.category import get_main_keyboard
 from db.models import get_db
-from db.crud import get_all_orders, get_order
+from db.crud import get_all_orders, get_order, clear_all_products
 
 router = Router()
 
@@ -552,3 +552,59 @@ async def check_user_markup(message: types.Message):
         )
     except Exception as e:
         await message.answer(f"❌ Ошибка: {str(e)}", parse_mode='HTML')
+
+@router.message(lambda m: m.text == "🗑️ Очистить базу от товаров")
+async def clear_products_confirm(message: types.Message):
+    """Запрашивает подтверждение на очистку базы данных от товаров"""
+    if not is_admin(message.from_user.id):
+        return
+    
+    # Получаем статистику перед очисткой
+    with get_db() as conn:
+        cur = conn.cursor()
+        cur.execute("SELECT COUNT(*) FROM products")
+        products_count = cur.fetchone()[0]
+        
+        cur.execute("SELECT COUNT(*) FROM preorder_products")
+        preorder_products_count = cur.fetchone()[0]
+    
+    if products_count == 0 and preorder_products_count == 0:
+        await message.answer(
+            "ℹ️ <b>База данных уже пуста</b>\n\n"
+            "Товаров в базе нет.",
+            parse_mode='HTML',
+            reply_markup=get_admin_keyboard()
+        )
+        return
+    
+    await message.answer(
+        f"⚠️ <b>ВНИМАНИЕ!</b>\n\n"
+        f"Вы собираетесь удалить <b>все товары</b> из базы данных:\n\n"
+        f"• Товаров основного прайса: <b>{products_count}</b>\n"
+        f"• Товаров предзаказа: <b>{preorder_products_count}</b>\n\n"
+        f"Также будут очищены все корзины пользователей.\n\n"
+        f"<b>Это действие нельзя отменить!</b>\n\n"
+        f"Для подтверждения отправьте: <code>ДА, УДАЛИТЬ</code>",
+        parse_mode='HTML'
+    )
+
+@router.message(lambda m: m.text and m.text.strip().upper() == "ДА, УДАЛИТЬ" and is_admin(m.from_user.id))
+async def clear_products_execute(message: types.Message):
+    """Выполняет очистку базы данных от товаров"""
+    try:
+        result = clear_all_products()
+        
+        await message.answer(
+            f"✅ <b>База данных очищена</b>\n\n"
+            f"Удалено товаров основного прайса: <b>{result['products_deleted']}</b>\n"
+            f"Удалено товаров предзаказа: <b>{result['preorder_products_deleted']}</b>\n\n"
+            f"Все корзины пользователей также очищены.",
+            parse_mode='HTML',
+            reply_markup=get_admin_keyboard()
+        )
+    except Exception as e:
+        await message.answer(
+            f"❌ <b>Ошибка при очистке базы данных:</b>\n\n{str(e)}",
+            parse_mode='HTML',
+            reply_markup=get_admin_keyboard()
+        )
