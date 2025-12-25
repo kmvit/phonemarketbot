@@ -15,7 +15,7 @@ from bot.keyboards.category import (
 from db.crud import (
     get_products_by_category, get_available_subcategories, add_to_cart,
     get_cart, remove_from_cart, clear_cart, create_order, get_product_by_id, get_order,
-    update_cart_quantity,
+    update_cart_quantity, get_dynamic_subcategories_for_parent,
     get_preorder_products_by_category, get_preorder_available_subcategories,
     get_preorder_categories, get_preorder_product_by_id, add_to_preorder_cart,
     get_preorder_cart, remove_from_preorder_cart, update_preorder_cart_quantity
@@ -361,18 +361,21 @@ async def go_back(message: types.Message, state: FSMContext):
         source = user_state.get('source', 'standard')
         
         if user_state.get('screen') == 'subcategories':
-            # Возвращаемся к списку родительских категорий
-            user_states[user_id] = {'screen': 'categories', 'source': source}
+            # Возвращаемся к главному меню
+            user_states[user_id] = {'screen': 'main'}
             await message.answer(
-                "Выберите категорию:",
-                reply_markup=get_categories_keyboard()
+                'Главное меню:',
+                reply_markup=get_main_keyboard(user_id)
             )
         elif user_state.get('screen') == 'products':
-            # Возвращаемся к списку подкатегорий
+            # Возвращаемся к списку подкатегорий той же родительской категории
             parent_cat = user_state.get('parent_category')
             if parent_cat:
-                possible_subcats = parent_to_subcategories.get(parent_cat, [])
-                available_subcats = get_available_subcategories(parent_cat, possible_subcats, source)
+                # Получаем подкатегории для этой родительской категории (проверяем оба source)
+                available_subcats_standard = get_available_subcategories(parent_cat, None, 'standard')
+                available_subcats_simple = get_available_subcategories(parent_cat, None, 'simple')
+                # Объединяем и убираем дубликаты
+                available_subcats = list(set(available_subcats_standard + available_subcats_simple))
                 
                 if available_subcats:
                     user_states[user_id] = {'screen': 'subcategories', 'parent_category': parent_cat, 'source': source}
@@ -381,18 +384,18 @@ async def go_back(message: types.Message, state: FSMContext):
                         reply_markup=get_subcategories_keyboard(parent_cat, available_subcats)
                     )
                 else:
-                    # Если нет подкатегорий, возвращаемся к категориям
-                    user_states[user_id] = {'screen': 'categories', 'source': source}
+                    # Если нет подкатегорий, возвращаемся к главному меню
+                    user_states[user_id] = {'screen': 'main'}
                     await message.answer(
-                        "Выберите категорию:",
-                        reply_markup=get_categories_keyboard()
+                        'Главное меню:',
+                        reply_markup=get_main_keyboard(user_id)
                     )
             else:
-                # Если нет информации о родительской категории, возвращаемся к категориям
-                user_states[user_id] = {'screen': 'categories', 'source': source}
+                # Если нет информации о родительской категории, возвращаемся к главному меню
+                user_states[user_id] = {'screen': 'main'}
                 await message.answer(
-                    "Выберите категорию:",
-                    reply_markup=get_categories_keyboard()
+                    'Главное меню:',
+                    reply_markup=get_main_keyboard(user_id)
                 )
         else:
             # По умолчанию возвращаемся в главное меню
@@ -452,11 +455,19 @@ def is_subcategory(text, user_state=None):
     if user_state and user_state.get('is_preorder'):
         return False, None
     
-    # Проверяем все подкатегории из всех родительских категорий
-    for parent_cat, subcats in parent_to_subcategories.items():
-        for subcat in subcats:
-            if text == get_category_with_icon(subcat) or text == subcat:
-                return True, subcat
+    # Получаем динамический маппинг категорий из БД
+    from db.crud import get_dynamic_parent_to_subcategories
+    
+    # Проверяем оба source: 'standard' и 'simple'
+    for source in ['standard', 'simple']:
+        dynamic_mapping = get_dynamic_parent_to_subcategories(source)
+        
+        # Проверяем все подкатегории из всех родительских категорий
+        for parent_cat, subcats in dynamic_mapping.items():
+            for subcat in subcats:
+                if text == get_category_with_icon(subcat) or text == subcat:
+                    return True, subcat
+    
     return False, None
 
 @router.message(lambda m: is_parent_category(m.text, user_states.get(m.from_user.id, {}))[0])
@@ -473,9 +484,8 @@ async def show_subcategories(message: types.Message):
     user_states[user_id] = {'screen': 'subcategories', 'parent_category': parent_cat, 'source': source}
     
     # Получаем подкатегории, которые есть в БД (проверяем оба source: 'standard' и 'simple')
-    possible_subcats = parent_to_subcategories.get(parent_cat, [])
-    available_subcats_standard = get_available_subcategories(parent_cat, possible_subcats, 'standard')
-    available_subcats_simple = get_available_subcategories(parent_cat, possible_subcats, 'simple')
+    available_subcats_standard = get_available_subcategories(parent_cat, None, 'standard')
+    available_subcats_simple = get_available_subcategories(parent_cat, None, 'simple')
     # Объединяем и убираем дубликаты
     available_subcats = list(set(available_subcats_standard + available_subcats_simple))
     
@@ -502,9 +512,16 @@ async def show_products_by_category(message: types.Message):
     
     # Определяем родительскую категорию для этой подкатегории
     parent_cat = None
-    for parent, subcats in parent_to_subcategories.items():
-        if subcat in subcats:
-            parent_cat = parent
+    from db.crud import get_dynamic_parent_to_subcategories
+    
+    # Проверяем оба source: 'standard' и 'simple'
+    for check_source in ['standard', 'simple']:
+        dynamic_mapping = get_dynamic_parent_to_subcategories(check_source)
+        for parent, subcats in dynamic_mapping.items():
+            if subcat in subcats:
+                parent_cat = parent
+                break
+        if parent_cat:
             break
     
     # Сохраняем состояние

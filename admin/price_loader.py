@@ -130,6 +130,13 @@ def extract_category(product_name):
             return 'iPhone 15'
         elif re.search(r'iPhone\s+16\b', clean_name):
             return 'iPhone 16'
+        # iPhone 17 модели - проверяем специфичные модели ПЕРЕД общим iPhone 17
+        elif 'iPhone 17 Pro Max' in clean_name:
+            return 'iPhone 17 Pro Max'
+        elif 'iPhone 17 Pro' in clean_name:
+            return 'iPhone 17 Pro'
+        elif 'iPhone 17 Air' in clean_name:
+            return 'iPhone 17 Air'
         elif re.search(r'iPhone\s+17\b', clean_name):
             return 'iPhone 17'
         elif 'iPhone Air' in clean_name:
@@ -628,11 +635,50 @@ def detect_file_format(file_path):
         # По умолчанию пытаемся стандартный формат
         return 'standard'
 
+def extract_categories_from_excel(file_path):
+    """
+    Извлекает категории из Excel файла.
+    Категории - это строки без цены, заканчивающиеся двоеточием.
+    Возвращает словарь: {номер_строки_категории: название_категории_без_двоеточия}
+    """
+    try:
+        df = pd.read_excel(file_path)
+        categories = {}
+        
+        for idx, row in df.iterrows():
+            col1 = row.iloc[0] if pd.notna(row.iloc[0]) else None
+            col2 = row.iloc[1] if len(row) > 1 and pd.notna(row.iloc[1]) else None
+            
+            # Проверяем: есть название, нет цены, есть двоеточие
+            if col1 and not col2 and ':' in str(col1):
+                category_name = str(col1).replace(':', '').strip()
+                categories[idx] = category_name
+                
+        return categories
+    except Exception as e:
+        print(f"Ошибка при извлечении категорий: {e}")
+        return {}
+
+def get_category_for_product_row(row_idx, categories_map):
+    """
+    Определяет категорию для товара на основе его позиции в файле.
+    Ищет ближайший заголовок категории выше текущей строки.
+    """
+    current_category = None
+    
+    # Ищем ближайшую категорию выше текущей строки
+    for cat_row_idx in sorted(categories_map.keys()):
+        if cat_row_idx < row_idx:
+            current_category = categories_map[cat_row_idx]
+        else:
+            break
+            
+    return current_category
+
 def load_price_from_excel_simple_format(file_path, markup_amount=None, source='simple'):
     """
     Загружает прайс из Excel файла с простым форматом: два столбца (название, цена).
-    В названии заложены: память, цвет и страна (флаг).
-    Формат: "Google Pixel 6 256 Sorta Seafoam🇯🇵" -> память: 256 Gb, цвет: Sorta Seafoam, страна: 🇯🇵
+    Теперь поддерживает динамическое извлечение категорий из заголовков в файле.
     """
     if markup_amount is None:
         markup_amount = get_markup_amount()
@@ -640,12 +686,13 @@ def load_price_from_excel_simple_format(file_path, markup_amount=None, source='s
     try:
         df = pd.read_excel(file_path)
         
-        products_loaded = 0
+        # Сначала извлекаем все категории из файла
+        categories_map = extract_categories_from_excel(file_path)
+        print(f"Найдено категорий в файле: {len(categories_map)}")
+        for row_idx, cat_name in categories_map.items():
+            print(f"  Строка {row_idx}: {cat_name}")
         
-        # Список заголовков категорий, которые нужно пропускать
-        category_headers = ['YANDEX', 'META', 'NINTENDO', 'VALVE', 'SONY', 'GOOGLE', 
-                           'GOPRO', 'INSTA360', 'HONOR', 'HUAWEI', 'APPLE', 'SAMSUNG',
-                           'XIAOMI', 'VIVO', 'REALME', 'GARMIN']
+        products_loaded = 0
         
         with get_db() as conn:
             cur = conn.cursor()
@@ -659,7 +706,7 @@ def load_price_from_excel_simple_format(file_path, markup_amount=None, source='s
                 if num_cols < 2:
                     continue
                 
-                # Первая колонка - название товара (с памятью, цветом и флагом страны)
+                # Первая колонка - название товара
                 product_name = row.iloc[0] if pd.notna(row.iloc[0]) else None
                 
                 # Вторая колонка - цена
@@ -674,12 +721,19 @@ def load_price_from_excel_simple_format(file_path, markup_amount=None, source='s
                 if not product_name_str or product_name_str.lower() in ('nan', 'none'):
                     continue
                 
-                # Пропускаем заголовки категорий (все заглавные буквы, без цены)
+                # Пропускаем заголовки категорий (строки с двоеточием без цены)
                 price_is_none = pd.isna(price_str) if price_str is not None else True
                 if price_str is not None and str(price_str).strip().lower() in ('nan', 'none'):
                     price_is_none = True
-                if product_name_str.upper() in category_headers and price_is_none:
-                    continue
+                if ':' in product_name_str and price_is_none:
+                    continue  # Это заголовок категории, пропускаем
+                
+                # Определяем категорию для этого товара на основе позиции в файле
+                category = get_category_for_product_row(idx, categories_map)
+                
+                if not category:
+                    # Если категория не найдена, используем старый метод как fallback
+                    category = extract_category(product_name_str)
                 
                 # Извлекаем данные из названия
                 memory = extract_memory(product_name_str)
@@ -691,9 +745,6 @@ def load_price_from_excel_simple_format(file_path, markup_amount=None, source='s
                     country = '🌍 Не указано'
                 else:
                     country = country_flag
-                
-                # Определяем категорию
-                category = extract_category(product_name_str)
                 
                 # Парсим цену
                 price = parse_price(price_str)

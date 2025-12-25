@@ -27,7 +27,7 @@ parent_categories = [
 parent_to_subcategories = {
     "Apple": [
         "iPhone SE", "iPhone 11", "iPhone 12", "iPhone 13", "iPhone 14",
-        "iPhone 15", "iPhone 16", "iPhone 17", "iPhone Air",
+        "iPhone 15", "iPhone 16", "iPhone 17", "iPhone 17 Air", "iPhone 17 Pro", "iPhone 17 Pro Max", "iPhone Air",
         "iPad", "iPad Air", "iPad Pro", "iPad mini",
         "MacBook Air", "MacBook Pro", "Mac mini",
         "Apple Watch", "Apple iMac", "AirPods", "Magic Keyboard", "Apple Pencil",
@@ -125,7 +125,8 @@ category_icons = {
     # Подкатегории Apple
     "iPhone SE": "📱", "iPhone 11": "📱", "iPhone 12": "📱", "iPhone 13": "📱",
     "iPhone 14": "📱", "iPhone 15": "📱", "iPhone 16": "📱", "iPhone 17": "📱",
-    "iPhone Air": "📱", "iPad": "🔳", "iPad Air": "🔳", "iPad Pro": "🔳",
+    "iPhone 17 Air": "📱", "iPhone 17 Pro": "📱", "iPhone 17 Pro Max": "📱", "iPhone Air": "📱", 
+    "iPad": "🔳", "iPad Air": "🔳", "iPad Pro": "🔳",
     "iPad mini": "🔳", "MacBook Air": "💻", "MacBook Pro": "💻", "Mac mini": "🖥",
     "Apple Watch": "⌚", "Apple iMac": "🖥", "AirPods": "🎧", "Magic Keyboard": "⌨️", 
     "Apple Pencil": "🖊", "Apple Аксессуары": "🎧",
