@@ -479,7 +479,7 @@ def extract_country_flag_from_name(text):
 def parse_country(country_str):
     """Парсит страну: извлекает инициалы и возвращает флаг + инициалы по маппингу"""
     if not country_str or pd.isna(country_str):
-        return '🌍 Не указано'
+        return None
     
     country_str = str(country_str).strip()
     
@@ -501,7 +501,7 @@ def parse_country(country_str):
     if '🎧' in country_str or '🖊' in country_str:
         return country_str
     
-    return '🌍 Не указано'
+    return None
 
 def parse_price(price_str):
     """Парсит цену (убирает пробелы, конвертирует в число)"""
@@ -740,9 +740,9 @@ def load_price_from_excel_simple_format(file_path, markup_amount=None, source='s
                 color = extract_color(product_name_str)
                 country_flag = extract_country_flag_from_name(product_name_str)
                 
-                # Если флаг не найден, используем "Не указано"
+                # Если флаг не найден, используем None
                 if not country_flag:
-                    country = '🌍 Не указано'
+                    country = None
                 else:
                     country = country_flag
                 
@@ -957,9 +957,9 @@ def load_preorder_price_from_excel_simple_format(file_path, markup_amount=None):
                 color = extract_color(product_name_str)
                 country_flag = extract_country_flag_from_name(product_name_str)
                 
-                # Если флаг не найден, используем "Не указано"
+                # Если флаг не найден, используем None
                 if not country_flag:
-                    country = '🌍 Не указано'
+                    country = None
                 else:
                     country = country_flag
                 
