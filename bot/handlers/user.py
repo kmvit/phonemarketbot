@@ -607,8 +607,11 @@ async def show_products_by_category(message: types.Message):
             for prod in color_products_sorted:
                 country_with_flag = get_country_with_flag(prod['country'])
                 final_price = calculate_price_with_markup(prod['price'], user_id)
-                # Формируем текст товара: название, страна, цена
-                product_text = f"{prod['name']}, {country_with_flag}, {final_price}₽"
+                # Формируем текст товара: название, страна (если есть), цена
+                if country_with_flag:
+                    product_text = f"{prod['name']}, {country_with_flag}, {final_price}₽"
+                else:
+                    product_text = f"{prod['name']}, {final_price}₽"
                 
                 # Формируем deep link для товара
                 deep_link = f"https://t.me/{bot_username}?start=add_{prod['id']}"
@@ -1375,8 +1378,11 @@ async def handle_preorder_category(message: types.Message, state: FSMContext):
             for prod in color_products_sorted:
                 country_with_flag = get_country_with_flag(prod['country'])
                 final_price = calculate_price_with_markup(prod['price'], user_id, is_preorder=True)
-                # Формируем текст товара: название, страна, цена
-                product_text = f"{prod['name']}, {country_with_flag}, {final_price}₽"
+                # Формируем текст товара: название, страна (если есть), цена
+                if country_with_flag:
+                    product_text = f"{prod['name']}, {country_with_flag}, {final_price}₽"
+                else:
+                    product_text = f"{prod['name']}, {final_price}₽"
                 
                 # Формируем deep link для товара предзаказа
                 deep_link = f"https://t.me/{bot_username}?start=preorder_{prod['id']}"
