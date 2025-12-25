@@ -48,6 +48,99 @@ def get_available_parent_categories(possible_parent_cats, source='standard'):
     
     return available_parents
 
+def sort_categories_smart(categories):
+    """
+    Умная сортировка категорий с учетом номеров моделей и вариантов.
+    Например: iPhone 15, iPhone 15 Pro, iPhone 16, iPhone 16 Pro, iPhone 17, iPhone 17 Air, iPhone 17 Pro
+    """
+    import re
+    
+    def get_sort_key(category):
+        # Извлекаем бренд, номер модели и вариант
+        # Примеры: "iPhone 15 Pro", "Samsung Galaxy S24 Ultra", "Xiaomi 14 Pro"
+        
+        # Для iPhone
+        iphone_match = re.search(r'iPhone\s+(\d+)\s*(.*)', category)
+        if iphone_match:
+            model_num = int(iphone_match.group(1))
+            variant = iphone_match.group(2).strip()
+            
+            # Определяем приоритет варианта (базовая модель идет первой)
+            variant_priority = 0
+            if not variant:  # Базовая модель (iPhone 15)
+                variant_priority = 0
+            elif 'Air' in variant:
+                variant_priority = 1
+            elif 'Pro Max' in variant:
+                variant_priority = 3
+            elif 'Pro' in variant:
+                variant_priority = 2
+            elif 'Ultra' in variant:
+                variant_priority = 4
+            else:
+                variant_priority = 5
+                
+            return (0, model_num, variant_priority, variant)
+        
+        # Для Samsung Galaxy
+        samsung_match = re.search(r'Samsung Galaxy S(\d+)\s*(.*)', category)
+        if samsung_match:
+            model_num = int(samsung_match.group(1))
+            variant = samsung_match.group(2).strip()
+            
+            variant_priority = 0
+            if not variant:
+                variant_priority = 0
+            elif 'Ultra' in variant:
+                variant_priority = 2
+            elif '+' in variant:
+                variant_priority = 1
+            else:
+                variant_priority = 3
+                
+            return (1, model_num, variant_priority, variant)
+        
+        # Для Xiaomi
+        xiaomi_match = re.search(r'Xiaomi\s+(\d+)\s*(.*)', category)
+        if xiaomi_match:
+            model_num = int(xiaomi_match.group(1))
+            variant = xiaomi_match.group(2).strip()
+            
+            variant_priority = 0
+            if not variant:
+                variant_priority = 0
+            elif 'Pro' in variant:
+                variant_priority = 1
+            elif 'Ultra' in variant:
+                variant_priority = 2
+            else:
+                variant_priority = 3
+                
+            return (2, model_num, variant_priority, variant)
+        
+        # Для Google Pixel
+        pixel_match = re.search(r'Google Pixel\s+(\d+)\s*(.*)', category)
+        if pixel_match:
+            model_num = int(pixel_match.group(1))
+            variant = pixel_match.group(2).strip()
+            
+            variant_priority = 0
+            if not variant:
+                variant_priority = 0
+            elif 'Pro XL' in variant:
+                variant_priority = 2
+            elif 'Pro' in variant:
+                variant_priority = 1
+            else:
+                variant_priority = 3
+                
+            return (3, model_num, variant_priority, variant)
+        
+        # Для остальных категорий - сортируем по алфавиту
+        return (999, 0, 0, category)
+    
+    return sorted(categories, key=get_sort_key)
+
 def get_available_subcategories(parent_category, possible_subcats=None, source='standard'):
     """Получает список подкатегорий, которые есть в БД для родительской категории с фильтрацией по source"""
     # Если не передан список возможных подкатегорий, получаем их динамически
@@ -68,7 +161,10 @@ def get_available_subcategories(parent_category, possible_subcats=None, source='
             WHERE category IN ({placeholders}) AND source=?
         """, possible_subcats + [source])
         rows = cur.fetchall()
-        return [row[0] for row in rows]
+        categories = [row[0] for row in rows]
+        
+        # Применяем умную сортировку
+        return sort_categories_smart(categories)
 
 def get_dynamic_subcategories_for_parent(parent_category, source='standard'):
     """Получает подкатегории для родительской категории из динамического маппинга"""
@@ -144,6 +240,10 @@ def get_dynamic_parent_to_subcategories(source='standard'):
         
         if category not in parent_mapping[parent]:
             parent_mapping[parent].append(category)
+    
+    # Сортируем подкатегории в каждой родительской категории
+    for parent in parent_mapping:
+        parent_mapping[parent] = sort_categories_smart(parent_mapping[parent])
     
     return parent_mapping
 

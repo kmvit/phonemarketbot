@@ -41,7 +41,7 @@ class AddToCartStates(StatesGroup):
 def get_country_with_flag(country):
     """Возвращает страну с флагом (всегда возвращает как есть, так как в БД уже сохранен флаг)"""
     if not country:
-        return "🌍 Не указано"
+        return ""
     
     country_str = str(country).strip()
     # Возвращаем как есть, так как при загрузке прайса уже добавляется флаг через маппинг
@@ -377,6 +377,10 @@ async def go_back(message: types.Message, state: FSMContext):
                 # Объединяем и убираем дубликаты
                 available_subcats = list(set(available_subcats_standard + available_subcats_simple))
                 
+                # Применяем сортировку после объединения
+                from db.crud import sort_categories_smart
+                available_subcats = sort_categories_smart(available_subcats)
+                
                 if available_subcats:
                     user_states[user_id] = {'screen': 'subcategories', 'parent_category': parent_cat, 'source': source}
                     await message.answer(
@@ -488,6 +492,10 @@ async def show_subcategories(message: types.Message):
     available_subcats_simple = get_available_subcategories(parent_cat, None, 'simple')
     # Объединяем и убираем дубликаты
     available_subcats = list(set(available_subcats_standard + available_subcats_simple))
+    
+    # Применяем сортировку после объединения
+    from db.crud import sort_categories_smart
+    available_subcats = sort_categories_smart(available_subcats)
     
     if not available_subcats:
         await message.answer("В этой категории пока нет товаров.")
