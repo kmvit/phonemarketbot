@@ -9,7 +9,7 @@ import re
 from collections import OrderedDict
 from bot.keyboards.category import (
     get_main_keyboard, get_categories_keyboard, get_subcategories_keyboard,
-    get_category_with_icon,
+    parent_categories, parent_to_subcategories, get_category_with_icon,
     get_preorder_categories_keyboard
 )
 from db.crud import (
@@ -339,12 +339,12 @@ async def show_categories(message: types.Message, state: FSMContext):
     user_states[user_id] = {'screen': 'categories', 'source': 'standard'}
     
     # Получаем категории, в которых есть товары (проверяем оба source: 'standard' и 'simple')
-    # Теперь получаем все категории динамически из БД, включая новые бренды
     from db.crud import get_available_parent_categories
+    from bot.keyboards.category import parent_categories
     
-    # Проверяем категории для обоих source (None означает получить все категории из БД)
-    available_standard = get_available_parent_categories(None, 'standard')
-    available_simple = get_available_parent_categories(None, 'simple')
+    # Проверяем категории для обоих source
+    available_standard = get_available_parent_categories(parent_categories, 'standard')
+    available_simple = get_available_parent_categories(parent_categories, 'simple')
     # Объединяем и убираем дубликаты
     available_categories = list(set(available_standard + available_simple))
     
@@ -467,7 +467,7 @@ async def go_back(message: types.Message, state: FSMContext):
                     user_states[user_id] = {'screen': 'subcategories', 'parent_category': parent_cat, 'source': source}
                     await message.answer(
                         f"Выберите подкатегорию:",
-                        reply_markup=get_subcategories_keyboard(parent_cat, available_subcats, source)
+                        reply_markup=get_subcategories_keyboard(parent_cat, available_subcats)
                     )
                 else:
                     # Если нет подкатегорий, возвращаемся к главному меню
@@ -519,8 +519,7 @@ async def contact_admin(message: types.Message):
     )
 
 def is_parent_category(text, user_state=None):
-    """Проверяет, является ли сообщение выбором родительской категории.
-    Теперь работает динамически - проверяет все категории из БД, а не только статический список."""
+    """Проверяет, является ли сообщение выбором родительской категории"""
     if not text:
         return False, None
     
@@ -528,19 +527,8 @@ def is_parent_category(text, user_state=None):
     if user_state and user_state.get('is_preorder'):
         return False, None
     
-    # Получаем все доступные родительские категории из БД динамически
-    from db.crud import get_available_parent_categories
-    source = user_state.get('source', 'standard') if user_state else 'standard'
-    
-    # Получаем все категории из БД (None означает получить все)
-    available_parents = get_available_parent_categories(None, source)
-    
-    # Текст уже без иконок, так как мы их убрали
-    text_clean = text
-    
-    # Проверяем все категории
-    for parent_cat in available_parents:
-        if text == get_category_with_icon(parent_cat) or text == parent_cat or text_clean == parent_cat:
+    for parent_cat in parent_categories:
+        if text == get_category_with_icon(parent_cat) or text == parent_cat:
             return True, parent_cat
     return False, None
 
@@ -597,7 +585,7 @@ async def show_subcategories(message: types.Message):
     
     await message.answer(
         f"Выберите подкатегорию:",
-        reply_markup=get_subcategories_keyboard(parent_cat, available_subcats, source)
+        reply_markup=get_subcategories_keyboard(parent_cat, available_subcats)
     )
 
     return True

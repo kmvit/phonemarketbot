@@ -32,20 +32,13 @@ def get_products_by_category(category, source='standard'):
             } for row in rows
         ]
 
-def get_available_parent_categories(possible_parent_cats=None, source='standard'):
-    """
-    Получает список родительских категорий, в которых есть товары с указанным source.
-    Если possible_parent_cats не указан, возвращает все родительские категории из БД.
-    """
+def get_available_parent_categories(possible_parent_cats, source='standard'):
+    """Получает список родительских категорий, в которых есть товары с указанным source"""
+    if not possible_parent_cats:
+        return []
+    
     # Получаем динамический маппинг категорий из БД
     dynamic_mapping = get_dynamic_parent_to_subcategories(source)
-    
-    # Если список возможных категорий не указан, возвращаем все категории из БД
-    if possible_parent_cats is None:
-        # Возвращаем все родительские категории, которые имеют товары
-        available_parents = [parent for parent, subcats in dynamic_mapping.items() if subcats]
-        # Сортируем для единообразия
-        return sorted(available_parents)
     
     # Возвращаем только те родительские категории, которые есть в возможных и имеют товары в БД
     available_parents = []
@@ -150,23 +143,31 @@ def sort_categories_smart(categories):
 
 def get_available_subcategories(parent_category, possible_subcats=None, source='standard'):
     """Получает список подкатегорий, которые есть в БД для родительской категории с фильтрацией по source"""
-    # Если не передан список возможных подкатегорий, получаем их динамически
-    if possible_subcats is None:
-        dynamic_mapping = get_dynamic_parent_to_subcategories(source)
-        possible_subcats = dynamic_mapping.get(parent_category, [])
+    # Получаем динамический маппинг категорий из БД
+    dynamic_mapping = get_dynamic_parent_to_subcategories(source)
     
-    if not possible_subcats:
+    # Получаем все подкатегории из БД для этой родительской категории
+    db_subcats = dynamic_mapping.get(parent_category, [])
+    
+    # Если передан список возможных подкатегорий, фильтруем по нему
+    if possible_subcats is not None:
+        # Объединяем статический список и динамические категории из БД
+        all_possible = list(set(possible_subcats + db_subcats))
+        # Фильтруем только те, которые есть в возможных
+        db_subcats = [cat for cat in db_subcats if cat in all_possible]
+    
+    if not db_subcats:
         return []
     
     with get_db() as conn:
         cur = conn.cursor()
-        # Получаем уникальные категории из БД, которые есть в списке возможных подкатегорий
-        placeholders = ','.join(['?'] * len(possible_subcats))
+        # Получаем уникальные категории из БД, которые есть в списке подкатегорий
+        placeholders = ','.join(['?'] * len(db_subcats))
         cur.execute(f"""
             SELECT DISTINCT category
             FROM products
             WHERE category IN ({placeholders}) AND source=?
-        """, possible_subcats + [source])
+        """, db_subcats + [source])
         rows = cur.fetchall()
         categories = [row[0] for row in rows]
         
@@ -264,8 +265,7 @@ def detect_parent_category_from_name(category_name):
 def get_dynamic_parent_to_subcategories(source='standard'):
     """
     Создает динамический маппинг родительских категорий к подкатегориям
-    на основе данных из базы данных. Автоматически определяет родительские категории
-    для всех категорий, включая новые неизвестные бренды.
+    на основе данных из базы данных
     """
     categories = get_all_categories_from_db(source)
     
@@ -273,8 +273,47 @@ def get_dynamic_parent_to_subcategories(source='standard'):
     parent_mapping = {}
     
     for category in categories:
-        # Автоматически определяем родительскую категорию
-        parent = detect_parent_category_from_name(category)
+        # Определяем родительскую категорию по названию
+        if 'iPhone' in category or 'iPad' in category or 'MacBook' in category or 'Apple' in category or 'AirPods' in category:
+            parent = 'Apple'
+        elif 'Samsung' in category:
+            parent = 'Samsung'
+        elif 'Google' in category or 'Pixel' in category:
+            parent = 'Google Pixel'
+        elif 'Xiaomi' in category:
+            parent = 'Xiaomi'
+        elif 'Redmi' in category:
+            parent = 'Redmi'
+        elif 'POCO' in category:
+            parent = 'POCO'
+        elif 'Honor' in category:
+            parent = 'Honor'
+        elif 'Huawei' in category:
+            parent = 'Huawei'
+        elif 'Vivo' in category:
+            parent = 'Vivo'
+        elif 'Realme' in category:
+            parent = 'Realme'
+        elif 'Yandex' in category:
+            parent = 'Yandex'
+        elif 'Meta' in category:
+            parent = 'Meta Quest'
+        elif 'Nintendo' in category:
+            parent = 'Nintendo'
+        elif 'Valve' in category:
+            parent = 'Valve'
+        elif 'Sony' in category:
+            parent = 'Sony'
+        elif 'GoPro' in category:
+            parent = 'GoPro'
+        elif 'Insta360' in category:
+            parent = 'Insta360'
+        elif 'Garmin' in category:
+            parent = 'Garmin'
+        elif 'Dyson' in category:
+            parent = 'Dyson'
+        else:
+            parent = 'Аксессуары'
         
         if parent not in parent_mapping:
             parent_mapping[parent] = []
