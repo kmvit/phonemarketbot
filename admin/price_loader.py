@@ -729,7 +729,8 @@ def extract_categories_from_excel(file_path):
 def _looks_like_product(text):
     """
     Проверяет, похожа ли строка на товар (а не на категорию).
-    Товары обычно содержат конкретные характеристики: цвет, память, флаги стран и т.д.
+    Товары обычно содержат конкретные характеристики: цвет, память, флаги стран, типы SIM и т.д.
+    Категории обычно содержат только модель и память без цвета и типа SIM.
     """
     if not text:
         return False
@@ -743,29 +744,34 @@ def _looks_like_product(text):
     if any(flag in text for flag in country_flags):
         return True
     
-    # 2. Содержит типичные цвета товаров (после названия модели)
-    # Но только если это не просто название модели с цветом как категория
-    # Проверяем, есть ли цвет в конце строки (признак товара)
-    colors = ['BLACK', 'BLUE', 'RED', 'MIDNIGHT', 'STARLIGHT', 'PURPLE', 'YELLOW', 
-              'GREEN', 'PINK', 'WHITE', 'SILVER', 'GOLD', 'ORANGE', 'LAVENDER', 'SAGE']
-    # Если цвет в конце и есть другие признаки товара - это товар
-    for color in colors:
-        if text_upper.endswith(color) or text_upper.endswith(' ' + color):
-            # Проверяем, есть ли еще признаки товара (память, eSim и т.д.)
-            if re.search(r'\d+\s*(GB|TB)', text_upper) or 'ESIM' in text_upper or 'SIM' in text_upper:
-                return True
-    
-    # 3. Содержит типы SIM (eSim, Sim + eSIM) - признак товара
-    if re.search(r'\b(ESIM|SIM\s*\+\s*ESIM)\b', text_upper):
+    # 2. Содержит типы SIM (eSim, Sim + eSIM) - это точно товар
+    if re.search(r'\b(ESIM|SIM\s*\+\s*ESIM|E\s*SIM)\b', text_upper):
         return True
+    
+    # 3. Содержит тире перед типом SIM или страной - признак товара
+    # Например: "Apple iPhone 17 256GB Black — eSim" - товар
+    if '—' in text or '–' in text or '-' in text:
+        # Проверяем, что после тире идет тип SIM или страна
+        if re.search(r'[—–-]\s*(ESIM|SIM|E\s*SIM)', text_upper):
+            return True
     
     # 4. Содержит конкретную память с цветом в конце - признак товара
     # Например: "Apple iPhone 17 256GB Black" - товар
-    # А "Apple iPhone 17 256GB" - может быть категорией
-    if re.search(r'\d+\s*(GB|TB)\s+[A-Z]+\s*$', text_upper):
-        return True
+    # А "Apple iPhone 17 256GB" - категория (без цвета)
+    # Проверяем паттерн: память + цвет в конце
+    if re.search(r'\d+\s*(GB|TB)\s+[A-Z][A-Z\s]+\s*$', text_upper):
+        # Проверяем, что это действительно цвет, а не часть модели
+        colors = ['BLACK', 'BLUE', 'RED', 'MIDNIGHT', 'STARLIGHT', 'PURPLE', 'YELLOW', 
+                  'GREEN', 'PINK', 'WHITE', 'SILVER', 'GOLD', 'ORANGE', 'LAVENDER', 'SAGE',
+                  'NATURAL', 'TEAL', 'PURPLE', 'STARLIGHT']
+        for color in colors:
+            if text_upper.endswith(color) or text_upper.endswith(' ' + color):
+                return True
     
-    # Если не похоже на товар - это категория
+    # 5. Содержит запятую с ценой или страной в конце - признак товара
+    # Но это проверяется на уровне загрузки (есть цена или нет)
+    
+    # Если не похоже на товар - это категория/подкатегория
     return False
 
 def normalize_category_name(category_name):
@@ -885,18 +891,10 @@ def load_price_from_excel_simple_format(file_path, markup_amount=None, source='s
                 category = get_category_for_product_row(idx, categories_map)
                 
                 if not category:
-                    # Если категория не найдена, используем старый метод как fallback
+                    # Если категория не найдена из заголовка, используем старый метод как fallback
                     category = extract_category(product_name_str)
-                else:
-                    # Если категория найдена из заголовка, но она не распознается extract_category,
-                    # попытаемся нормализовать её или использовать как есть
-                    # Проверяем, что категория из заголовка корректна
-                    normalized_category = extract_category(category)
-                    # Если extract_category вернул другую категорию, используем её (она более точная)
-                    # Но если вернул None или 'Аксессуары', используем категорию из заголовка
-                    if normalized_category and normalized_category != 'Аксессуары':
-                        category = normalized_category
-                    # Иначе оставляем категорию из заголовка как есть
+                # Если категория найдена из заголовка Excel, используем её как есть
+                # Это позволяет сохранять подкатегории типа "Apple iPhone 17 256GB"
                 
                 # Извлекаем данные из названия
                 memory = extract_memory(product_name_str)
