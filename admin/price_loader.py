@@ -462,6 +462,27 @@ def extract_category(product_name):
             return 'Garmin MARQ'
         return 'Garmin'
     
+    # Dyson
+    elif 'Dyson' in clean_name or 'DYSON' in clean_name:
+        # Определяем модель Dyson
+        if 'V15' in clean_name:
+            return 'Dyson V15'
+        elif 'V12' in clean_name:
+            return 'Dyson V12'
+        elif 'V11' in clean_name:
+            return 'Dyson V11'
+        elif 'V10' in clean_name:
+            return 'Dyson V10'
+        elif 'V8' in clean_name:
+            return 'Dyson V8'
+        elif 'Airwrap' in clean_name:
+            return 'Dyson Airwrap'
+        elif 'Supersonic' in clean_name:
+            return 'Dyson Supersonic'
+        elif 'Purifier' in clean_name:
+            return 'Dyson Purifier'
+        return 'Dyson'
+    
     return 'Аксессуары'  # По умолчанию
 
 def extract_country_flag_from_name(text):
@@ -638,7 +659,7 @@ def detect_file_format(file_path):
 def extract_categories_from_excel(file_path):
     """
     Извлекает категории из Excel файла.
-    Категории - это строки без цены, заканчивающиеся двоеточием.
+    Категории - это строки без цены, заканчивающиеся двоеточием или просто заголовки.
     Возвращает словарь: {номер_строки_категории: название_категории_без_двоеточия}
     """
     try:
@@ -649,15 +670,94 @@ def extract_categories_from_excel(file_path):
             col1 = row.iloc[0] if pd.notna(row.iloc[0]) else None
             col2 = row.iloc[1] if len(row) > 1 and pd.notna(row.iloc[1]) else None
             
-            # Проверяем: есть название, нет цены, есть двоеточие
-            if col1 and not col2 and ':' in str(col1):
-                category_name = str(col1).replace(':', '').strip()
+            if not col1:
+                continue
+            
+            col1_str = str(col1).strip()
+            
+            # Проверяем: есть название, нет цены (или цена пустая/NaN)
+            price_is_empty = True
+            if col2 is not None:
+                try:
+                    # Пытаемся преобразовать в число
+                    float(str(col2).replace(' ', '').replace(',', ''))
+                    price_is_empty = False
+                except (ValueError, AttributeError):
+                    price_is_empty = True
+            
+            # Категория может быть:
+            # 1. С двоеточием в конце (например, "Honor:")
+            # 2. Просто заголовок без двоеточия, но без цены
+            # 3. Заголовок в верхнем регистре (например, "HONOR", "DYSON")
+            is_category = False
+            
+            if ':' in col1_str:
+                # Есть двоеточие - это категория
+                is_category = True
+                category_name = col1_str.replace(':', '').strip()
+            elif price_is_empty and col1_str:
+                # Нет цены и есть текст - проверяем, не является ли это категорией
+                # Проверяем, является ли это известным брендом (в верхнем регистре или смешанном)
+                known_brands = ['HONOR', 'DYSON', 'HUAWEI', 'VIVO', 'REALME', 'XIAOMI', 
+                               'SAMSUNG', 'APPLE', 'GOOGLE', 'META', 'NINTENDO', 'VALVE',
+                               'SONY', 'GOPRO', 'INSTA360', 'GARMIN', 'YANDEX', 'REDMI', 'POCO']
+                col1_upper = col1_str.upper()
+                if col1_upper in known_brands or any(brand in col1_upper for brand in known_brands):
+                    is_category = True
+                    category_name = col1_str.strip()
+            
+            if is_category and category_name:
+                # Нормализуем название категории (приводим к правильному регистру)
+                category_name = normalize_category_name(category_name)
                 categories[idx] = category_name
                 
         return categories
     except Exception as e:
         print(f"Ошибка при извлечении категорий: {e}")
         return {}
+
+def normalize_category_name(category_name):
+    """Нормализует название категории (приводит к правильному регистру)"""
+    if not category_name:
+        return category_name
+    
+    category_upper = category_name.upper()
+    
+    # Маппинг известных брендов к правильному написанию
+    brand_mapping = {
+        'HONOR': 'Honor',
+        'DYSON': 'Dyson',
+        'HUAWEI': 'Huawei',
+        'VIVO': 'Vivo',
+        'REALME': 'Realme',
+        'XIAOMI': 'Xiaomi',
+        'SAMSUNG': 'Samsung',
+        'APPLE': 'Apple',
+        'GOOGLE': 'Google Pixel',
+        'META': 'Meta Quest',
+        'NINTENDO': 'Nintendo',
+        'VALVE': 'Valve',
+        'SONY': 'Sony',
+        'GOPRO': 'GoPro',
+        'INSTA360': 'Insta360',
+        'GARMIN': 'Garmin',
+        'YANDEX': 'Yandex',
+        'REDMI': 'Redmi',
+        'POCO': 'POCO'
+    }
+    
+    # Проверяем точное совпадение
+    if category_upper in brand_mapping:
+        return brand_mapping[category_upper]
+    
+    # Проверяем частичное совпадение
+    for brand_upper, brand_normalized in brand_mapping.items():
+        if brand_upper in category_upper:
+            # Заменяем бренд на нормализованный вариант
+            return category_upper.replace(brand_upper, brand_normalized).title()
+    
+    # Если не нашли, возвращаем с правильным регистром (первая буква заглавная)
+    return category_name.strip().title()
 
 def get_category_for_product_row(row_idx, categories_map):
     """
@@ -734,6 +834,16 @@ def load_price_from_excel_simple_format(file_path, markup_amount=None, source='s
                 if not category:
                     # Если категория не найдена, используем старый метод как fallback
                     category = extract_category(product_name_str)
+                else:
+                    # Если категория найдена из заголовка, но она не распознается extract_category,
+                    # попытаемся нормализовать её или использовать как есть
+                    # Проверяем, что категория из заголовка корректна
+                    normalized_category = extract_category(category)
+                    # Если extract_category вернул другую категорию, используем её (она более точная)
+                    # Но если вернул None или 'Аксессуары', используем категорию из заголовка
+                    if normalized_category and normalized_category != 'Аксессуары':
+                        category = normalized_category
+                    # Иначе оставляем категорию из заголовка как есть
                 
                 # Извлекаем данные из названия
                 memory = extract_memory(product_name_str)

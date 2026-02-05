@@ -32,13 +32,20 @@ def get_products_by_category(category, source='standard'):
             } for row in rows
         ]
 
-def get_available_parent_categories(possible_parent_cats, source='standard'):
-    """Получает список родительских категорий, в которых есть товары с указанным source"""
-    if not possible_parent_cats:
-        return []
-    
+def get_available_parent_categories(possible_parent_cats=None, source='standard'):
+    """
+    Получает список родительских категорий, в которых есть товары с указанным source.
+    Если possible_parent_cats не указан, возвращает все родительские категории из БД.
+    """
     # Получаем динамический маппинг категорий из БД
     dynamic_mapping = get_dynamic_parent_to_subcategories(source)
+    
+    # Если список возможных категорий не указан, возвращаем все категории из БД
+    if possible_parent_cats is None:
+        # Возвращаем все родительские категории, которые имеют товары
+        available_parents = [parent for parent, subcats in dynamic_mapping.items() if subcats]
+        # Сортируем для единообразия
+        return sorted(available_parents)
     
     # Возвращаем только те родительские категории, которые есть в возможных и имеют товары в БД
     available_parents = []
@@ -184,10 +191,81 @@ def get_all_categories_from_db(source='standard'):
         rows = cur.fetchall()
         return [row[0] for row in rows]
 
+def detect_parent_category_from_name(category_name):
+    """
+    Автоматически определяет родительскую категорию на основе названия категории.
+    Поддерживает известные бренды и автоматически создает новые родительские категории для неизвестных.
+    """
+    if not category_name:
+        return 'Аксессуары'
+    
+    category_upper = category_name.upper()
+    
+    # Маппинг известных брендов (проверяем от более специфичных к общим)
+    brand_patterns = [
+        # Apple (проверяем первым, так как может содержать другие слова)
+        (['IPHONE', 'IPAD', 'MACBOOK', 'APPLE', 'AIRPODS', 'MAC MINI', 'IMAC', 'WATCH'], 'Apple'),
+        # Samsung
+        (['SAMSUNG'], 'Samsung'),
+        # Google Pixel
+        (['GOOGLE', 'PIXEL'], 'Google Pixel'),
+        # Xiaomi
+        (['XIAOMI'], 'Xiaomi'),
+        # Redmi
+        (['REDMI'], 'Redmi'),
+        # POCO
+        (['POCO'], 'POCO'),
+        # Honor
+        (['HONOR'], 'Honor'),
+        # Huawei
+        (['HUAWEI'], 'Huawei'),
+        # Vivo
+        (['VIVO'], 'Vivo'),
+        # Realme
+        (['REALME'], 'Realme'),
+        # Yandex
+        (['YANDEX'], 'Yandex'),
+        # Meta Quest
+        (['META', 'QUEST'], 'Meta Quest'),
+        # Nintendo
+        (['NINTENDO'], 'Nintendo'),
+        # Valve
+        (['VALVE'], 'Valve'),
+        # Sony
+        (['SONY'], 'Sony'),
+        # GoPro
+        (['GOPRO'], 'GoPro'),
+        # Insta360
+        (['INSTA360'], 'Insta360'),
+        # Garmin
+        (['GARMIN'], 'Garmin'),
+        # Dyson
+        (['DYSON'], 'Dyson'),
+    ]
+    
+    # Проверяем известные бренды
+    for patterns, parent in brand_patterns:
+        if any(pattern in category_upper for pattern in patterns):
+            return parent
+    
+    # Если категория не распознана, пытаемся определить родительскую категорию автоматически
+    # Извлекаем первое слово из категории (обычно это бренд)
+    words = category_name.split()
+    if words:
+        first_word = words[0].strip()
+        # Если первое слово выглядит как бренд (заглавные буквы или смешанный регистр)
+        if first_word and (first_word[0].isupper() or first_word.isupper()):
+            # Используем первое слово как родительскую категорию
+            return first_word
+    
+    # По умолчанию - Аксессуары
+    return 'Аксессуары'
+
 def get_dynamic_parent_to_subcategories(source='standard'):
     """
     Создает динамический маппинг родительских категорий к подкатегориям
-    на основе данных из базы данных
+    на основе данных из базы данных. Автоматически определяет родительские категории
+    для всех категорий, включая новые неизвестные бренды.
     """
     categories = get_all_categories_from_db(source)
     
@@ -195,45 +273,8 @@ def get_dynamic_parent_to_subcategories(source='standard'):
     parent_mapping = {}
     
     for category in categories:
-        # Определяем родительскую категорию по названию
-        if 'iPhone' in category or 'iPad' in category or 'MacBook' in category or 'Apple' in category or 'AirPods' in category:
-            parent = 'Apple'
-        elif 'Samsung' in category:
-            parent = 'Samsung'
-        elif 'Google' in category or 'Pixel' in category:
-            parent = 'Google Pixel'
-        elif 'Xiaomi' in category:
-            parent = 'Xiaomi'
-        elif 'Redmi' in category:
-            parent = 'Redmi'
-        elif 'POCO' in category:
-            parent = 'POCO'
-        elif 'Honor' in category:
-            parent = 'Honor'
-        elif 'Huawei' in category:
-            parent = 'Huawei'
-        elif 'Vivo' in category:
-            parent = 'Vivo'
-        elif 'Realme' in category:
-            parent = 'Realme'
-        elif 'Yandex' in category:
-            parent = 'Yandex'
-        elif 'Meta' in category:
-            parent = 'Meta Quest'
-        elif 'Nintendo' in category:
-            parent = 'Nintendo'
-        elif 'Valve' in category:
-            parent = 'Valve'
-        elif 'Sony' in category:
-            parent = 'Sony'
-        elif 'GoPro' in category:
-            parent = 'GoPro'
-        elif 'Insta360' in category:
-            parent = 'Insta360'
-        elif 'Garmin' in category:
-            parent = 'Garmin'
-        else:
-            parent = 'Аксессуары'
+        # Автоматически определяем родительскую категорию
+        parent = detect_parent_category_from_name(category)
         
         if parent not in parent_mapping:
             parent_mapping[parent] = []
