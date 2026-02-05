@@ -106,6 +106,88 @@ def extract_model_with_color(product_name):
     # Если цвет не найден, возвращаем название как есть
     return name
 
+def extract_memory_from_name(product_name):
+    """Извлекает память из названия товара (64Gb, 128Gb, 256Gb, 512Gb, 1Tb, 2Tb и т.д.)"""
+    if not product_name:
+        return None
+    
+    # Форматы с единицами измерения (1TB, 2TB, 128Gb, 256Gb и т.д.)
+    patterns = [
+        r'(\d+)\s*TB',  # 1TB, 2TB, 4TB, 8TB
+        r'(\d+)\s*Tb',  # 1Tb, 2Tb, 4Tb, 8Tb
+        r'(\d+)\s*GB',  # 128GB, 256GB, 512GB
+        r'(\d+)\s*Gb',  # 64Gb, 128Gb, 256Gb, 512Gb
+    ]
+    for pattern in patterns:
+        match = re.search(pattern, product_name, re.IGNORECASE)
+        if match:
+            value = match.group(1)
+            unit = 'TB' if 'TB' in pattern.upper() else 'GB'
+            return f"{value}{unit}"
+    
+    # Просто цифры (128, 256, 512, 1024) - типичные значения памяти в ГБ
+    number_match = re.search(r'\b(128|256|512|1024|2048|4096)\b', product_name, re.IGNORECASE)
+    if number_match:
+        value = number_match.group(1)
+        return f"{value}GB"
+    
+    return None
+
+def extract_color(product_name):
+    """Извлекает цвет из названия товара"""
+    if not product_name:
+        return None
+    
+    # Список возможных цветов (от длинных к коротким)
+    colors = [
+        'Space Gray', 'Sp. Gray', 'Space Black', 'Rose Gold', 'Jet Black', 
+        'Light Gold', 'Cloud White', 'Sky Blue', 'Light Blush', 'Pur Fog',
+        'Blue Ocean', 'Green Alpine', 'Black Ocean', 'Mist Blue', 'Mil Lp',
+        'Black', 'Blue', 'Red', 'Midnight', 'Starlight', 'Purple', 'Yellow', 
+        'Green', 'Pink', 'White', 'Silver', 'Gold', 'Teal', 'Ultramarine', 
+        'Desert', 'Natural', 'Lavender', 'Sage', 'Orange', 'Star', 'Mid', 
+        'Plum', 'Ink', 'Nat', 'Denim', 'Link'
+    ]
+    
+    # Сортируем цвета по длине (от длинных к коротким)
+    colors_sorted = sorted(colors, key=len, reverse=True)
+    
+    for color in colors_sorted:
+        # Ищем цвет с учетом границ слов
+        pattern = r'\b' + re.escape(color) + r'\b'
+        if re.search(pattern, product_name, re.IGNORECASE):
+            return color
+    
+    return None
+
+def extract_sim_type(country):
+    """Извлекает тип SIM из поля country (eSim, Sim + eSIM и т.д.)"""
+    if not country:
+        return None
+    
+    country_str = str(country).strip()
+    
+    # Ищем тип SIM в строке country
+    # Паттерны: "eSim", "eSIM", "Sim + eSIM", "Sim+eSIM", "Sim + eSim" и т.д.
+    sim_patterns = [
+        r'Sim\s*\+\s*eSIM',  # Sim + eSIM
+        r'Sim\s*\+\s*eSim',  # Sim + eSim
+        r'eSIM',              # eSIM
+        r'eSim',              # eSim
+    ]
+    
+    for pattern in sim_patterns:
+        match = re.search(pattern, country_str, re.IGNORECASE)
+        if match:
+            sim_type = match.group(0)
+            # Нормализуем формат
+            if 'Sim + eSIM' in sim_type or 'Sim + eSim' in sim_type:
+                return 'Sim + eSIM'
+            elif 'eSIM' in sim_type or 'eSim' in sim_type:
+                return 'eSim'
+    
+    return None
+
 @router.message(Command("start"))
 async def cmd_start(message: types.Message, state: FSMContext):
     """Обработчик команды /start с поддержкой deep links для добавления товара"""
@@ -550,26 +632,18 @@ async def show_products_by_category(message: types.Message):
         await message.answer("В этой категории пока нет товаров.")
         return
     
-    # Группируем товары по базовой модели, затем по цвету
+    # Группируем товары только по памяти
     category_header = get_category_with_icon(subcat)
-    # Сначала группируем по базовой модели
-    base_model_groups = OrderedDict()
-    for prod in products:
-        base_model = extract_base_model(prod['name'])
-        if base_model not in base_model_groups:
-            base_model_groups[base_model] = []
-        base_model_groups[base_model].append(prod)
     
-    # Затем внутри каждой модели группируем по цвету
-    grouped_products = OrderedDict()
-    for base_model, model_products in base_model_groups.items():
-        color_groups = OrderedDict()
-        for prod in model_products:
-            model_with_color = extract_model_with_color(prod['name'])
-            if model_with_color not in color_groups:
-                color_groups[model_with_color] = []
-            color_groups[model_with_color].append(prod)
-        grouped_products[base_model] = color_groups
+    # Группируем по памяти
+    memory_groups = OrderedDict()
+    for prod in products:
+        memory = extract_memory_from_name(prod['name'])
+        if not memory:
+            memory = 'Без памяти'  # Если память не найдена
+        if memory not in memory_groups:
+            memory_groups[memory] = []
+        memory_groups[memory].append(prod)
     
     # Формируем сообщения с кликабельными ссылками для каждой строки товара
     header = f"<b>{category_header}</b>\n\n"
@@ -584,13 +658,76 @@ async def show_products_by_category(message: types.Message):
     max_text_len = 3500  # Оставляем запас для текста
     is_first_message = True  # Флаг для первого сообщения
     
-    for base_model, color_groups in grouped_products.items():
-        for model_with_color, color_products in color_groups.items():
-            # Заголовок для группы цвета
-            color_header = f"<b>📱 {model_with_color}</b>\n"
+    # Функция для сортировки памяти (чтобы 256GB, 512GB, 1TB, 2TB шли в правильном порядке)
+    def get_memory_sort_key(memory):
+        if not memory or memory == 'Без памяти':
+            return (999, '')
+        # Извлекаем число и единицу
+        match = re.search(r'(\d+)(GB|TB)', memory, re.IGNORECASE)
+        if match:
+            value = int(match.group(1))
+            unit = match.group(2).upper()
+            # TB имеет больший вес (умножаем на 1000)
+            multiplier = 1000 if unit == 'TB' else 1
+            return (0, value * multiplier)
+        return (999, memory)
+    
+    # Сортируем группы памяти
+    sorted_memories = sorted(memory_groups.keys(), key=get_memory_sort_key)
+    
+    for memory in sorted_memories:
+        memory_products = memory_groups[memory]
+        
+        # Заголовок для группы памяти - берем первый товар и извлекаем модель с памятью
+        if memory_products:
+            first_prod = memory_products[0]
+            # Извлекаем базовую модель и добавляем память
+            base_model = extract_base_model(first_prod['name'])
+            memory_header = f"<b>📱 {base_model} {memory}</b>\n"
+        else:
+            memory_header = f"<b>📱 {memory}</b>\n"
+        
+        # Проверяем, поместится ли заголовок памяти
+        if current_len + len(memory_header) > max_text_len:
+            # Отправляем текущее сообщение
+            await message.answer(current_text, parse_mode='HTML', disable_web_page_preview=True)
+            # Начинаем новое сообщение без заголовка категории
+            current_text = ""
+            current_len = 0
+            is_first_message = False
+        
+        current_text += memory_header
+        current_len += len(memory_header)
+        
+        # Сортируем товары внутри группы памяти по цвету, типу SIM и цене
+        def sort_key(prod):
+            # Извлекаем цвет для сортировки
+            color = extract_color(prod['name']) or ''
+            # Извлекаем тип SIM
+            sim_type = extract_sim_type(prod['country']) or ''
+            # Сортируем: цвет, тип SIM, цена
+            return (color, sim_type, prod['price'])
+        
+        memory_products_sorted = sorted(memory_products, key=sort_key)
+        
+        for prod in memory_products_sorted:
+            # Извлекаем тип SIM из country
+            sim_type = extract_sim_type(prod['country'])
+            final_price = calculate_price_with_markup(prod['price'], user_id)
             
-            # Проверяем, поместится ли заголовок цвета
-            if current_len + len(color_header) > max_text_len:
+            # Формируем текст товара в формате: название — тип SIM, цена
+            if sim_type:
+                product_text = f"{prod['name']} — {sim_type}, {final_price}₽"
+            else:
+                product_text = f"{prod['name']}, {final_price}₽"
+            
+            # Формируем deep link для товара
+            deep_link = f"https://t.me/{bot_username}?start=add_{prod['id']}"
+            
+            # Добавляем товар как кликабельную ссылку в тексте
+            product_line = f"<a href=\"{deep_link}\">{product_text}</a>\n"
+            
+            if current_len + len(product_line) > max_text_len:
                 # Отправляем текущее сообщение
                 await message.answer(current_text, parse_mode='HTML', disable_web_page_preview=True)
                 # Начинаем новое сообщение без заголовка категории
@@ -598,40 +735,11 @@ async def show_products_by_category(message: types.Message):
                 current_len = 0
                 is_first_message = False
             
-            current_text += color_header
-            current_len += len(color_header)
-            
-            # Сортируем товары внутри группы цвета по стране (или можно по цене)
-            color_products_sorted = sorted(color_products, key=lambda x: (x['country'] or '', x['price']))
-            
-            for prod in color_products_sorted:
-                country_with_flag = get_country_with_flag(prod['country'])
-                final_price = calculate_price_with_markup(prod['price'], user_id)
-                # Формируем текст товара: название, страна (если есть), цена
-                if country_with_flag:
-                    product_text = f"{prod['name']}, {country_with_flag}, {final_price}₽"
-                else:
-                    product_text = f"{prod['name']}, {final_price}₽"
-                
-                # Формируем deep link для товара
-                deep_link = f"https://t.me/{bot_username}?start=add_{prod['id']}"
-                
-                # Добавляем товар как кликабельную ссылку в тексте
-                product_line = f"<a href=\"{deep_link}\">{product_text}</a>\n"
-                
-                if current_len + len(product_line) > max_text_len:
-                    # Отправляем текущее сообщение
-                    await message.answer(current_text, parse_mode='HTML', disable_web_page_preview=True)
-                    # Начинаем новое сообщение без заголовка категории
-                    current_text = ""
-                    current_len = 0
-                    is_first_message = False
-                
-                current_text += product_line
-                current_len += len(product_line)
-            
-            current_text += "\n"
-            current_len += 1
+            current_text += product_line
+            current_len += len(product_line)
+        
+        current_text += "\n"
+        current_len += 1
     
     # Отправляем последнее сообщение
     if current_len > len(header):
@@ -1321,26 +1429,18 @@ async def handle_preorder_category(message: types.Message, state: FSMContext):
         'is_preorder': True
     }
     
-    # Группируем товары по базовой модели, затем по цвету
+    # Группируем товары только по памяти
     category_header = get_category_with_icon(category_clean)
-    # Сначала группируем по базовой модели
-    base_model_groups = OrderedDict()
-    for prod in products:
-        base_model = extract_base_model(prod['name'])
-        if base_model not in base_model_groups:
-            base_model_groups[base_model] = []
-        base_model_groups[base_model].append(prod)
     
-    # Затем внутри каждой модели группируем по цвету
-    grouped_products = OrderedDict()
-    for base_model, model_products in base_model_groups.items():
-        color_groups = OrderedDict()
-        for prod in model_products:
-            model_with_color = extract_model_with_color(prod['name'])
-            if model_with_color not in color_groups:
-                color_groups[model_with_color] = []
-            color_groups[model_with_color].append(prod)
-        grouped_products[base_model] = color_groups
+    # Группируем по памяти
+    memory_groups = OrderedDict()
+    for prod in products:
+        memory = extract_memory_from_name(prod['name'])
+        if not memory:
+            memory = 'Без памяти'  # Если память не найдена
+        if memory not in memory_groups:
+            memory_groups[memory] = []
+        memory_groups[memory].append(prod)
     
     # Формируем сообщения с кликабельными ссылками для каждой строки товара
     header = f"<b>{category_header}</b>\n\n"
@@ -1355,13 +1455,76 @@ async def handle_preorder_category(message: types.Message, state: FSMContext):
     max_text_len = 3500  # Оставляем запас для текста
     is_first_message = True  # Флаг для первого сообщения
     
-    for base_model, color_groups in grouped_products.items():
-        for model_with_color, color_products in color_groups.items():
-            # Заголовок для группы цвета
-            color_header = f"<b>📱 {model_with_color}</b>\n"
+    # Функция для сортировки памяти (чтобы 256GB, 512GB, 1TB, 2TB шли в правильном порядке)
+    def get_memory_sort_key(memory):
+        if not memory or memory == 'Без памяти':
+            return (999, '')
+        # Извлекаем число и единицу
+        match = re.search(r'(\d+)(GB|TB)', memory, re.IGNORECASE)
+        if match:
+            value = int(match.group(1))
+            unit = match.group(2).upper()
+            # TB имеет больший вес (умножаем на 1000)
+            multiplier = 1000 if unit == 'TB' else 1
+            return (0, value * multiplier)
+        return (999, memory)
+    
+    # Сортируем группы памяти
+    sorted_memories = sorted(memory_groups.keys(), key=get_memory_sort_key)
+    
+    for memory in sorted_memories:
+        memory_products = memory_groups[memory]
+        
+        # Заголовок для группы памяти - берем первый товар и извлекаем модель с памятью
+        if memory_products:
+            first_prod = memory_products[0]
+            # Извлекаем базовую модель и добавляем память
+            base_model = extract_base_model(first_prod['name'])
+            memory_header = f"<b>📱 {base_model} {memory}</b>\n"
+        else:
+            memory_header = f"<b>📱 {memory}</b>\n"
+        
+        # Проверяем, поместится ли заголовок памяти
+        if current_len + len(memory_header) > max_text_len:
+            # Отправляем текущее сообщение
+            await message.answer(current_text, parse_mode='HTML', disable_web_page_preview=True)
+            # Начинаем новое сообщение без заголовка категории
+            current_text = ""
+            current_len = 0
+            is_first_message = False
+        
+        current_text += memory_header
+        current_len += len(memory_header)
+        
+        # Сортируем товары внутри группы памяти по цвету, типу SIM и цене
+        def sort_key(prod):
+            # Извлекаем цвет для сортировки
+            color = extract_color(prod['name']) or ''
+            # Извлекаем тип SIM
+            sim_type = extract_sim_type(prod['country']) or ''
+            # Сортируем: цвет, тип SIM, цена
+            return (color, sim_type, prod['price'])
+        
+        memory_products_sorted = sorted(memory_products, key=sort_key)
+        
+        for prod in memory_products_sorted:
+            # Извлекаем тип SIM из country
+            sim_type = extract_sim_type(prod['country'])
+            final_price = calculate_price_with_markup(prod['price'], user_id, is_preorder=True)
             
-            # Проверяем, поместится ли заголовок цвета
-            if current_len + len(color_header) > max_text_len:
+            # Формируем текст товара в формате: название — тип SIM, цена
+            if sim_type:
+                product_text = f"{prod['name']} — {sim_type}, {final_price}₽"
+            else:
+                product_text = f"{prod['name']}, {final_price}₽"
+            
+            # Формируем deep link для товара предзаказа
+            deep_link = f"https://t.me/{bot_username}?start=preorder_{prod['id']}"
+            
+            # Добавляем товар как кликабельную ссылку в тексте
+            product_line = f"<a href=\"{deep_link}\">{product_text}</a>\n"
+            
+            if current_len + len(product_line) > max_text_len:
                 # Отправляем текущее сообщение
                 await message.answer(current_text, parse_mode='HTML', disable_web_page_preview=True)
                 # Начинаем новое сообщение без заголовка категории
@@ -1369,40 +1532,11 @@ async def handle_preorder_category(message: types.Message, state: FSMContext):
                 current_len = 0
                 is_first_message = False
             
-            current_text += color_header
-            current_len += len(color_header)
-            
-            # Сортируем товары внутри группы цвета по стране (или можно по цене)
-            color_products_sorted = sorted(color_products, key=lambda x: (x['country'] or '', x['price']))
-            
-            for prod in color_products_sorted:
-                country_with_flag = get_country_with_flag(prod['country'])
-                final_price = calculate_price_with_markup(prod['price'], user_id, is_preorder=True)
-                # Формируем текст товара: название, страна (если есть), цена
-                if country_with_flag:
-                    product_text = f"{prod['name']}, {country_with_flag}, {final_price}₽"
-                else:
-                    product_text = f"{prod['name']}, {final_price}₽"
-                
-                # Формируем deep link для товара предзаказа
-                deep_link = f"https://t.me/{bot_username}?start=preorder_{prod['id']}"
-                
-                # Добавляем товар как кликабельную ссылку в тексте
-                product_line = f"<a href=\"{deep_link}\">{product_text}</a>\n"
-                
-                if current_len + len(product_line) > max_text_len:
-                    # Отправляем текущее сообщение
-                    await message.answer(current_text, parse_mode='HTML', disable_web_page_preview=True)
-                    # Начинаем новое сообщение без заголовка категории
-                    current_text = ""
-                    current_len = 0
-                    is_first_message = False
-                
-                current_text += product_line
-                current_len += len(product_line)
-            
-            current_text += "\n"
-            current_len += 1
+            current_text += product_line
+            current_len += len(product_line)
+        
+        current_text += "\n"
+        current_len += 1
     
     # Отправляем последнее сообщение
     if current_len > len(header):
