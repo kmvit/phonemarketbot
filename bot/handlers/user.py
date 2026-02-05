@@ -443,11 +443,20 @@ async def go_back(message: types.Message, state: FSMContext):
         source = user_state.get('source', 'standard')
         
         if user_state.get('screen') == 'subcategories':
-            # Возвращаемся к главному меню
-            user_states[user_id] = {'screen': 'main'}
+            # Возвращаемся к списку категорий
+            from db.crud import get_available_parent_categories
+            from bot.keyboards.category import parent_categories
+            
+            # Проверяем категории для обоих source
+            available_standard = get_available_parent_categories(parent_categories, 'standard')
+            available_simple = get_available_parent_categories(parent_categories, 'simple')
+            # Объединяем и убираем дубликаты
+            available_categories = list(set(available_standard + available_simple))
+            
+            user_states[user_id] = {'screen': 'categories', 'source': source}
             await message.answer(
-                'Главное меню:',
-                reply_markup=get_main_keyboard(user_id)
+                "Выберите категорию:",
+                reply_markup=get_categories_keyboard('standard')
             )
         elif user_state.get('screen') == 'products':
             # Возвращаемся к списку подкатегорий той же родительской категории
@@ -570,8 +579,10 @@ async def show_subcategories(message: types.Message):
     user_states[user_id] = {'screen': 'subcategories', 'parent_category': parent_cat, 'source': source}
     
     # Получаем подкатегории, которые есть в БД (проверяем оба source: 'standard' и 'simple')
-    available_subcats_standard = get_available_subcategories(parent_cat, None, 'standard')
-    available_subcats_simple = get_available_subcategories(parent_cat, None, 'simple')
+    # Используем статический маппинг как возможные подкатегории, но также показываем все из БД
+    possible_subcats = parent_to_subcategories.get(parent_cat, [])
+    available_subcats_standard = get_available_subcategories(parent_cat, possible_subcats, 'standard')
+    available_subcats_simple = get_available_subcategories(parent_cat, possible_subcats, 'simple')
     # Объединяем и убираем дубликаты
     available_subcats = list(set(available_subcats_standard + available_subcats_simple))
     
@@ -579,10 +590,150 @@ async def show_subcategories(message: types.Message):
     from db.crud import sort_categories_smart
     available_subcats = sort_categories_smart(available_subcats)
     
+    # Если подкатегорий нет, проверяем, есть ли товары напрямую в родительской категории
     if not available_subcats:
-        await message.answer("В этой категории пока нет товаров.")
+        from db.crud import get_products_by_category
+        products_standard = get_products_by_category(parent_cat, 'standard')
+        products_simple = get_products_by_category(parent_cat, 'simple')
+        products = products_standard + products_simple
+        
+        if not products:
+            await message.answer("В этой категории пока нет товаров.")
+            return
+        
+        # Есть товары напрямую в родительской категории, показываем их
+        available_subcats = [parent_cat]
+    
+    # Если есть только одна подкатегория и она совпадает с родительской категорией,
+    # или все подкатегории - это сама родительская категория, то показываем товары напрямую
+    unique_subcats = [cat for cat in available_subcats if cat != parent_cat]
+    
+    if not unique_subcats:
+        # Все подкатегории - это сама родительская категория, показываем товары напрямую
+        user_states[user_id] = {
+            'screen': 'products',
+            'parent_category': parent_cat,
+            'subcategory': parent_cat,
+            'source': source
+        }
+        
+        # Получаем товары напрямую
+        from db.crud import get_products_by_category
+        products_standard = get_products_by_category(parent_cat, 'standard')
+        products_simple = get_products_by_category(parent_cat, 'simple')
+        products = products_standard + products_simple
+        
+        if not products:
+            await message.answer("В этой категории пока нет товаров.")
+            return
+        
+        # Показываем товары (используем ту же логику, что и в show_products_by_category)
+        # Импортируем необходимые функции
+        from bot.handlers.user import extract_memory_from_name, extract_base_model, extract_color, extract_sim_type
+        from admin.discount import calculate_price_with_markup
+        from collections import OrderedDict
+        import re
+        
+        category_header = get_category_with_icon(parent_cat)
+        
+        # Группируем по памяти
+        memory_groups = OrderedDict()
+        for prod in products:
+            memory = extract_memory_from_name(prod['name'])
+            if not memory:
+                memory = 'Без памяти'
+            if memory not in memory_groups:
+                memory_groups[memory] = []
+            memory_groups[memory].append(prod)
+        
+        # Формируем сообщения
+        header = f"<b>{category_header}</b>\n\n"
+        header += "Нажмите на строку товара, чтобы добавить в корзину:\n\n"
+        
+        bot_info = await message.bot.get_me()
+        bot_username = bot_info.username
+        
+        current_text = header
+        current_len = len(header)
+        max_text_len = 3500
+        is_first_message = True
+        
+        # Функция для сортировки памяти
+        def get_memory_sort_key(memory):
+            if not memory or memory == 'Без памяти':
+                return (999, '')
+            match = re.search(r'(\d+)(GB|TB)', memory, re.IGNORECASE)
+            if match:
+                value = int(match.group(1))
+                unit = match.group(2).upper()
+                multiplier = 1000 if unit == 'TB' else 1
+                return (0, value * multiplier)
+            return (999, memory)
+        
+        sorted_memories = sorted(memory_groups.keys(), key=get_memory_sort_key)
+        
+        for memory in sorted_memories:
+            memory_products = memory_groups[memory]
+            
+            if memory_products:
+                first_prod = memory_products[0]
+                base_model = extract_base_model(first_prod['name'])
+                memory_header = f"<b>📱 {base_model} {memory}</b>\n"
+            else:
+                memory_header = f"<b>📱 {memory}</b>\n"
+            
+            if current_len + len(memory_header) > max_text_len:
+                await message.answer(current_text, parse_mode='HTML', disable_web_page_preview=True)
+                current_text = ""
+                current_len = 0
+                is_first_message = False
+            
+            current_text += memory_header
+            current_len += len(memory_header)
+            
+            def sort_key(prod):
+                color = extract_color(prod['name']) or ''
+                sim_type = extract_sim_type(prod['country']) or ''
+                return (color, sim_type, prod['price'])
+            
+            memory_products_sorted = sorted(memory_products, key=sort_key)
+            
+            for prod in memory_products_sorted:
+                sim_type = extract_sim_type(prod['country'])
+                final_price = calculate_price_with_markup(prod['price'], user_id)
+                
+                if sim_type:
+                    product_text = f"{prod['name']} — {sim_type}, {final_price}₽"
+                else:
+                    product_text = f"{prod['name']}, {final_price}₽"
+                
+                deep_link = f"https://t.me/{bot_username}?start=add_{prod['id']}"
+                product_line = f"<a href=\"{deep_link}\">{product_text}</a>\n"
+                
+                if current_len + len(product_line) > max_text_len:
+                    await message.answer(current_text, parse_mode='HTML', disable_web_page_preview=True)
+                    current_text = ""
+                    current_len = 0
+                    is_first_message = False
+                
+                current_text += product_line
+                current_len += len(product_line)
+            
+            current_text += "\n"
+            current_len += 1
+        
+        if current_len > len(header):
+            await message.answer(current_text, parse_mode='HTML', disable_web_page_preview=True)
+        
+        from aiogram.types import ReplyKeyboardMarkup, KeyboardButton
+        back_keyboard = ReplyKeyboardMarkup(
+            keyboard=[[KeyboardButton(text="Назад")]],
+            resize_keyboard=True
+        )
+        await message.answer("Нажмите на строку товара для добавления в корзину", reply_markup=back_keyboard)
         return
     
+    # Есть настоящие подкатегории, показываем их
     await message.answer(
         f"Выберите подкатегорию:",
         reply_markup=get_subcategories_keyboard(parent_cat, available_subcats)

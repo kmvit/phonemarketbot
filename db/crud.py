@@ -149,25 +149,27 @@ def get_available_subcategories(parent_category, possible_subcats=None, source='
     # Получаем все подкатегории из БД для этой родительской категории
     db_subcats = dynamic_mapping.get(parent_category, [])
     
-    # Если передан список возможных подкатегорий, фильтруем по нему
+    if not db_subcats:
+        return []
+    
+    # Если передан список возможных подкатегорий, объединяем его с категориями из БД
+    # Это позволяет показывать как статические подкатегории, так и новые из БД
     if possible_subcats is not None:
         # Объединяем статический список и динамические категории из БД
         all_possible = list(set(possible_subcats + db_subcats))
-        # Фильтруем только те, которые есть в возможных
-        db_subcats = [cat for cat in db_subcats if cat in all_possible]
-    
-    if not db_subcats:
-        return []
+    else:
+        # Если список не передан, используем только категории из БД
+        all_possible = db_subcats
     
     with get_db() as conn:
         cur = conn.cursor()
         # Получаем уникальные категории из БД, которые есть в списке подкатегорий
-        placeholders = ','.join(['?'] * len(db_subcats))
+        placeholders = ','.join(['?'] * len(all_possible))
         cur.execute(f"""
             SELECT DISTINCT category
             FROM products
             WHERE category IN ({placeholders}) AND source=?
-        """, db_subcats + [source])
+        """, all_possible + [source])
         rows = cur.fetchall()
         categories = [row[0] for row in rows]
         
