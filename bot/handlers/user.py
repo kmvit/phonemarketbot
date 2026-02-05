@@ -9,8 +9,7 @@ import re
 from collections import OrderedDict
 from bot.keyboards.category import (
     get_main_keyboard, get_categories_keyboard, get_subcategories_keyboard,
-    parent_categories, parent_to_subcategories, get_category_with_icon,
-    get_preorder_categories_keyboard
+    get_category_with_icon, get_preorder_categories_keyboard
 )
 from db.crud import (
     get_products_by_category, get_available_subcategories, add_to_cart,
@@ -338,13 +337,12 @@ async def show_categories(message: types.Message, state: FSMContext):
     user_id = message.from_user.id
     user_states[user_id] = {'screen': 'categories', 'source': 'standard'}
     
-    # Получаем категории, в которых есть товары (проверяем оба source: 'standard' и 'simple')
+    # Получаем категории из БД (проверяем оба source: 'standard' и 'simple')
     from db.crud import get_available_parent_categories
-    from bot.keyboards.category import parent_categories
     
     # Проверяем категории для обоих source
-    available_standard = get_available_parent_categories(parent_categories, 'standard')
-    available_simple = get_available_parent_categories(parent_categories, 'simple')
+    available_standard = get_available_parent_categories(None, 'standard')
+    available_simple = get_available_parent_categories(None, 'simple')
     # Объединяем и убираем дубликаты
     available_categories = list(set(available_standard + available_simple))
     
@@ -445,11 +443,10 @@ async def go_back(message: types.Message, state: FSMContext):
         if user_state.get('screen') == 'subcategories':
             # Возвращаемся к списку категорий
             from db.crud import get_available_parent_categories
-            from bot.keyboards.category import parent_categories
             
             # Проверяем категории для обоих source
-            available_standard = get_available_parent_categories(parent_categories, 'standard')
-            available_simple = get_available_parent_categories(parent_categories, 'simple')
+            available_standard = get_available_parent_categories(None, 'standard')
+            available_simple = get_available_parent_categories(None, 'simple')
             # Объединяем и убираем дубликаты
             available_categories = list(set(available_standard + available_simple))
             
@@ -536,9 +533,16 @@ def is_parent_category(text, user_state=None):
     if user_state and user_state.get('is_preorder'):
         return False, None
     
-    for parent_cat in parent_categories:
-        if text == get_category_with_icon(parent_cat) or text == parent_cat:
-            return True, parent_cat
+    # Получаем родительские категории из БД
+    from db.crud import get_available_parent_categories
+    
+    # Проверяем оба source: 'standard' и 'simple'
+    for source in ['standard', 'simple']:
+        available_parents = get_available_parent_categories(None, source)
+        for parent_cat in available_parents:
+            if text == get_category_with_icon(parent_cat) or text == parent_cat:
+                return True, parent_cat
+    
     return False, None
 
 def is_subcategory(text, user_state=None):
@@ -579,10 +583,8 @@ async def show_subcategories(message: types.Message):
     user_states[user_id] = {'screen': 'subcategories', 'parent_category': parent_cat, 'source': source}
     
     # Получаем подкатегории, которые есть в БД (проверяем оба source: 'standard' и 'simple')
-    # Используем статический маппинг как возможные подкатегории, но также показываем все из БД
-    possible_subcats = parent_to_subcategories.get(parent_cat, [])
-    available_subcats_standard = get_available_subcategories(parent_cat, possible_subcats, 'standard')
-    available_subcats_simple = get_available_subcategories(parent_cat, possible_subcats, 'simple')
+    available_subcats_standard = get_available_subcategories(parent_cat, None, 'standard')
+    available_subcats_simple = get_available_subcategories(parent_cat, None, 'simple')
     # Объединяем и убираем дубликаты
     available_subcats = list(set(available_subcats_standard + available_subcats_simple))
     

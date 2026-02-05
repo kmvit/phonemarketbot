@@ -32,21 +32,22 @@ def get_products_by_category(category, source='standard'):
             } for row in rows
         ]
 
-def get_available_parent_categories(possible_parent_cats, source='standard'):
+def get_available_parent_categories(possible_parent_cats=None, source='standard'):
     """Получает список родительских категорий, в которых есть товары с указанным source"""
-    if not possible_parent_cats:
-        return []
-    
     # Получаем динамический маппинг категорий из БД
     dynamic_mapping = get_dynamic_parent_to_subcategories(source)
     
-    # Возвращаем только те родительские категории, которые есть в возможных и имеют товары в БД
-    available_parents = []
-    for parent_cat in possible_parent_cats:
-        if parent_cat in dynamic_mapping and dynamic_mapping[parent_cat]:
-            available_parents.append(parent_cat)
-    
-    return available_parents
+    # Если передан список возможных категорий, фильтруем по нему
+    if possible_parent_cats is not None:
+        # Возвращаем только те родительские категории, которые есть в возможных и имеют товары в БД
+        available_parents = []
+        for parent_cat in possible_parent_cats:
+            if parent_cat in dynamic_mapping and dynamic_mapping[parent_cat]:
+                available_parents.append(parent_cat)
+        return available_parents
+    else:
+        # Если список не передан, возвращаем все родительские категории из БД
+        return list(dynamic_mapping.keys())
 
 def sort_categories_smart(categories):
     """
@@ -267,67 +268,93 @@ def detect_parent_category_from_name(category_name):
 def get_dynamic_parent_to_subcategories(source='standard'):
     """
     Создает динамический маппинг родительских категорий к подкатегориям
-    на основе данных из базы данных
+    на основе данных из базы данных.
+    
+    Теперь использует поле parent_category из БД, если оно заполнено.
+    Fallback на старую логику определения родителя по названию.
     """
-    categories = get_all_categories_from_db(source)
-    
-    # Группируем категории по брендам
-    parent_mapping = {}
-    
-    for category in categories:
-        # Определяем родительскую категорию по названию
-        if 'iPhone' in category or 'iPad' in category or 'MacBook' in category or 'Apple' in category or 'AirPods' in category:
-            parent = 'Apple'
-        elif 'Samsung' in category:
-            parent = 'Samsung'
-        elif 'Google' in category or 'Pixel' in category:
-            parent = 'Google Pixel'
-        elif 'Xiaomi' in category:
-            parent = 'Xiaomi'
-        elif 'Redmi' in category:
-            parent = 'Redmi'
-        elif 'POCO' in category:
-            parent = 'POCO'
-        elif 'Honor' in category:
-            parent = 'Honor'
-        elif 'Huawei' in category:
-            parent = 'Huawei'
-        elif 'Vivo' in category:
-            parent = 'Vivo'
-        elif 'Realme' in category:
-            parent = 'Realme'
-        elif 'Yandex' in category:
-            parent = 'Yandex'
-        elif 'Meta' in category:
-            parent = 'Meta Quest'
-        elif 'Nintendo' in category:
-            parent = 'Nintendo'
-        elif 'Valve' in category:
-            parent = 'Valve'
-        elif 'Sony' in category:
-            parent = 'Sony'
-        elif 'GoPro' in category:
-            parent = 'GoPro'
-        elif 'Insta360' in category:
-            parent = 'Insta360'
-        elif 'Garmin' in category:
-            parent = 'Garmin'
-        elif 'Dyson' in category:
-            parent = 'Dyson'
-        else:
-            parent = 'Аксессуары'
+    with get_db() as conn:
+        cur = conn.cursor()
         
-        if parent not in parent_mapping:
-            parent_mapping[parent] = []
+        # Получаем уникальные пары (parent_category, category) из БД
+        cur.execute("""
+            SELECT DISTINCT parent_category, category
+            FROM products
+            WHERE source=?
+            ORDER BY parent_category, category
+        """, (source,))
+        rows = cur.fetchall()
         
-        if category not in parent_mapping[parent]:
-            parent_mapping[parent].append(category)
-    
-    # Сортируем подкатегории в каждой родительской категории
-    for parent in parent_mapping:
-        parent_mapping[parent] = sort_categories_smart(parent_mapping[parent])
-    
-    return parent_mapping
+        parent_mapping = {}
+        
+        for row in rows:
+            parent_from_db = row[0]
+            category = row[1]
+            
+            # Если parent_category заполнен, используем его
+            if parent_from_db:
+                parent = parent_from_db
+            else:
+                # Fallback: определяем родительскую категорию по названию (старая логика)
+                if 'iPhone' in category or 'iPad' in category or 'MacBook' in category or 'Apple' in category or 'AirPods' in category:
+                    parent = 'Apple'
+                elif 'Samsung' in category:
+                    parent = 'Samsung'
+                elif 'Google' in category or 'Pixel' in category:
+                    parent = 'Google Pixel'
+                elif 'Xiaomi' in category:
+                    parent = 'Xiaomi'
+                elif 'Redmi' in category:
+                    parent = 'Redmi'
+                elif 'POCO' in category:
+                    parent = 'POCO'
+                elif 'Honor' in category:
+                    parent = 'Honor'
+                elif 'Huawei' in category:
+                    parent = 'Huawei'
+                elif 'Vivo' in category:
+                    parent = 'Vivo'
+                elif 'Realme' in category:
+                    parent = 'Realme'
+                elif 'Yandex' in category:
+                    parent = 'Yandex'
+                elif 'Meta' in category:
+                    parent = 'Meta Quest'
+                elif 'Nintendo' in category:
+                    parent = 'Nintendo'
+                elif 'Valve' in category:
+                    parent = 'Valve'
+                elif 'Sony' in category:
+                    parent = 'Sony'
+                elif 'GoPro' in category:
+                    parent = 'GoPro'
+                elif 'Insta360' in category:
+                    parent = 'Insta360'
+                elif 'Garmin' in category:
+                    parent = 'Garmin'
+                elif 'Dyson' in category:
+                    parent = 'Dyson'
+                else:
+                    parent = 'Аксессуары'
+            
+            if parent not in parent_mapping:
+                parent_mapping[parent] = []
+            
+            # Если родительская категория совпадает с подкатегорией, показываем товары сразу
+            # (нет подкатегорий, только товары)
+            if parent == category:
+                # Не добавляем в список подкатегорий
+                pass
+            else:
+                # Добавляем подкатегорию
+                if category not in parent_mapping[parent]:
+                    parent_mapping[parent].append(category)
+        
+        # Сортируем подкатегории в каждой родительской категории
+        for parent in parent_mapping:
+            parent_mapping[parent] = sort_categories_smart(parent_mapping[parent])
+        
+        return parent_mapping
 
 def get_product_by_id(product_id):
     """Получает товар по ID"""

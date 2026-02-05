@@ -15,6 +15,7 @@ def init_db():
         cur.execute('''
             CREATE TABLE IF NOT EXISTS products (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
+                parent_category TEXT,
                 category TEXT,
                 name TEXT,
                 memory TEXT,
@@ -27,6 +28,13 @@ def init_db():
         # Миграция: добавляем колонку source, если её нет
         try:
             cur.execute("ALTER TABLE products ADD COLUMN source TEXT DEFAULT 'standard'")
+        except sqlite3.OperationalError:
+            # Колонка уже существует, игнорируем ошибку
+            pass
+        
+        # Миграция: добавляем колонку parent_category, если её нет
+        try:
+            cur.execute("ALTER TABLE products ADD COLUMN parent_category TEXT")
         except sqlite3.OperationalError:
             # Колонка уже существует, игнорируем ошибку
             pass
@@ -146,6 +154,7 @@ def init_db():
         cur.execute('''
             CREATE TABLE IF NOT EXISTS preorder_products (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
+                parent_category TEXT,
                 category TEXT,
                 name TEXT,
                 memory TEXT,
@@ -154,6 +163,13 @@ def init_db():
                 price INTEGER
             )
         ''')
+        
+        # Миграция: добавляем колонку parent_category в preorder_products, если её нет
+        try:
+            cur.execute("ALTER TABLE preorder_products ADD COLUMN parent_category TEXT")
+        except sqlite3.OperationalError:
+            # Колонка уже существует, игнорируем ошибку
+            pass
         
         # Таблица корзины предзаказа (отдельная от основной корзины)
         cur.execute('''

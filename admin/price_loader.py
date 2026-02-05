@@ -656,9 +656,134 @@ def detect_file_format(file_path):
         # По умолчанию пытаемся стандартный формат
         return 'standard'
 
+def extract_categories_from_excel_v2(file_path):
+    """
+    Извлекает иерархию категорий из Excel файла (новая версия).
+    
+    Структура:
+    - Родительские категории (например, META, APPLE) - строки БЕЗ цены, окруженные пустыми строками
+      И после них следует либо пустая строка, либо подкатегория (не товар)
+    - Подкатегории (например, "Apple iPhone 17 256GB") - строки БЕЗ цены, идущие после родительской категории
+    - Товары - строки С ценой
+    
+    Возвращает словарь: {номер_строки: {'type': 'parent'|'subcategory'|'product', 'name': 'название', 'parent': 'родитель'}}
+    """
+    try:
+        df = pd.read_excel(file_path)
+        
+        # Первый проход: определяем типы всех строк (пустая, с ценой, без цены)
+        row_types = []
+        for idx, row in df.iterrows():
+            col1 = row.iloc[0] if pd.notna(row.iloc[0]) else None
+            col2 = row.iloc[1] if len(row) > 1 and pd.notna(row.iloc[1]) else None
+            
+            is_empty = not col1 or str(col1).strip() == '' or str(col1).lower() == 'nan'
+            
+            if is_empty:
+                row_types.append('empty')
+            else:
+                has_price = False
+                if col2 is not None:
+                    try:
+                        float(str(col2).replace(' ', '').replace(',', ''))
+                        has_price = True
+                    except (ValueError, AttributeError):
+                        pass
+                
+                if has_price:
+                    row_types.append('with_price')
+                else:
+                    row_types.append('no_price')
+        
+        # Второй проход: определяем parent/subcategory
+        structure = {}
+        current_parent = None
+        
+        for idx, row in df.iterrows():
+            if idx >= len(row_types):
+                continue
+                
+            row_type = row_types[idx]
+            
+            if row_type == 'empty':
+                continue
+            
+            col1 = row.iloc[0]
+            col2 = row.iloc[1] if len(row) > 1 and pd.notna(row.iloc[1]) else None
+            col1_str = str(col1).strip()
+            
+            if row_type == 'with_price':
+                # Товар
+                structure[idx] = {
+                    'type': 'product',
+                    'name': col1_str,
+                    'parent': current_parent,
+                    'price': col2
+                }
+            else:
+                # Строка без цены - родительская категория или подкатегория
+                # Проверяем, что находится ДО и ПОСЛЕ этой строки
+                
+                prev_empty = (idx == 0) or (idx > 0 and row_types[idx - 1] == 'empty')
+                
+                # Смотрим на следующую непустую строку
+                next_row_type = None
+                for next_idx in range(idx + 1, len(row_types)):
+                    if row_types[next_idx] != 'empty':
+                        next_row_type = row_types[next_idx]
+                        break
+                
+                # Родительская категория:
+                # 1. До неё пустая строка (или это первая строка)
+                # 2. После неё следующая непустая строка - это либо подкатегория (no_price), либо товар (with_price)
+                #    Если товар - значит у родительской категории нет подкатегорий
+                #    Если подкатегория - значит есть иерархия
+                
+                # Проверяем, является ли это родительской категорией:
+                # - Перед ней пустая строка
+                # - Это не внутри уже определенной родительской категории с подкатегориями
+                
+                # Дополнительно: родительские категории обычно короткие (APPLE, META, Apple и т.д.)
+                # или содержат только бренд без деталей
+                # Проверяем известные бренды (список из normalize_category_name)
+                col1_upper = col1_str.upper().replace(':', '').strip()
+                known_parent_brands = [
+                    'META', 'NINTENDO', 'VALVE', 'SONY', 'GOOGLE', 'GOPRO', 
+                    'HONOR', 'APPLE', 'NOTHING', 'SAMSUNG', 'XIAOMI', 'VIVO', 
+                    'REALME', 'GARMIN', 'DYSON', 'HUAWEI', 'YANDEX', 'REDMI', 
+                    'POCO', 'INSTA360'
+                ]
+                is_known_brand = col1_upper in known_parent_brands
+                
+                # Если перед строкой пустая строка И (это известный бренд ИЛИ не было текущего родителя)
+                if prev_empty and (is_known_brand or current_parent is None):
+                    # Родительская категория
+                    category_name = normalize_category_name(col1_str.replace(':', '').strip())
+                    current_parent = category_name
+                    structure[idx] = {
+                        'type': 'parent',
+                        'name': category_name,
+                        'parent': None
+                    }
+                else:
+                    # Подкатегория
+                    category_name = col1_str.replace(':', '').strip()
+                    structure[idx] = {
+                        'type': 'subcategory',
+                        'name': category_name,
+                        'parent': current_parent
+                    }
+        
+        return structure
+    except Exception as e:
+        print(f"Ошибка при извлечении категорий: {e}")
+        import traceback
+        traceback.print_exc()
+        return {}
+
 def extract_categories_from_excel(file_path):
     """
-    Извлекает категории из Excel файла.
+    Извлекает категории из Excel файла (старая версия для совместимости).
     Категории - это строки без цены, заканчивающиеся двоеточием или просто заголовки.
     Возвращает словарь: {номер_строки_категории: название_категории_без_двоеточия}
     """
@@ -845,13 +970,21 @@ def load_price_from_excel_simple_format(file_path, markup_amount=None, source='s
     try:
         df = pd.read_excel(file_path)
         
-        # Сначала извлекаем все категории из файла
-        categories_map = extract_categories_from_excel(file_path)
-        print(f"Найдено категорий в файле: {len(categories_map)}")
-        for row_idx, cat_name in categories_map.items():
-            print(f"  Строка {row_idx}: {cat_name}")
+        # Используем новую версию извлечения категорий
+        structure = extract_categories_from_excel_v2(file_path)
+        print(f"Анализ структуры файла завершен: {len(structure)} записей")
+        
+        # Выводим структуру для отладки
+        parent_count = sum(1 for item in structure.values() if item['type'] == 'parent')
+        subcat_count = sum(1 for item in structure.values() if item['type'] == 'subcategory')
+        product_count = sum(1 for item in structure.values() if item['type'] == 'product')
+        print(f"  Родительских категорий: {parent_count}")
+        print(f"  Подкатегорий: {subcat_count}")
+        print(f"  Товаров: {product_count}")
         
         products_loaded = 0
+        current_parent = None
+        current_subcategory = None
         
         with get_db() as conn:
             cur = conn.cursor()
@@ -860,82 +993,82 @@ def load_price_from_excel_simple_format(file_path, markup_amount=None, source='s
             cur.execute("DELETE FROM products WHERE source = ?", (source,))
             
             for idx, row in df.iterrows():
-                # Проверяем количество колонок в строке
-                num_cols = len(row)
-                if num_cols < 2:
+                # Проверяем, есть ли эта строка в структуре
+                if idx not in structure:
                     continue
                 
-                # Первая колонка - название товара
-                product_name = row.iloc[0] if pd.notna(row.iloc[0]) else None
+                item = structure[idx]
                 
-                # Вторая колонка - цена
-                price_str = row.iloc[1] if pd.notna(row.iloc[1]) else None
-                
-                if not product_name or pd.isna(product_name):
-                    continue
-                
-                product_name_str = str(product_name).strip()
-                
-                # Пропускаем пустые строки и строки с "None" или "nan"
-                if not product_name_str or product_name_str.lower() in ('nan', 'none'):
-                    continue
-                
-                # Пропускаем заголовки категорий (строки с двоеточием без цены)
-                price_is_none = pd.isna(price_str) if price_str is not None else True
-                if price_str is not None and str(price_str).strip().lower() in ('nan', 'none'):
-                    price_is_none = True
-                if ':' in product_name_str and price_is_none:
-                    continue  # Это заголовок категории, пропускаем
-                
-                # Определяем категорию для этого товара на основе позиции в файле
-                category = get_category_for_product_row(idx, categories_map)
-                
-                if not category:
-                    # Если категория не найдена из заголовка, используем старый метод как fallback
-                    category = extract_category(product_name_str)
-                # Если категория найдена из заголовка Excel, используем её как есть
-                # Это позволяет сохранять подкатегории типа "Apple iPhone 17 256GB"
-                
-                # Извлекаем данные из названия
-                memory = extract_memory(product_name_str)
-                color = extract_color(product_name_str)
-                country_flag = extract_country_flag_from_name(product_name_str)
-                
-                # Если флаг не найден, используем None
-                if not country_flag:
-                    country = None
-                else:
-                    country = country_flag
-                
-                # Парсим цену
-                price = parse_price(price_str)
-                
-                if price is None:
-                    continue
-                
-                # Сохраняем базовую цену БЕЗ наценки (наценка будет применяться при отображении)
-                # Убираем флаг и лишние пробелы из названия для сохранения
-                # Оставляем только название модели с памятью и цветом (без флага)
-                clean_name = product_name_str
-                # Убираем флаги
-                for flag in SUPPORTED_COUNTRY_FLAGS:
-                    clean_name = clean_name.replace(flag, '')
-                clean_name = re.sub(r'\s+', ' ', clean_name).strip()
-                
-                # Сохраняем в БД
-                try:
-                    cur.execute("""
-                        INSERT INTO products (category, name, memory, color, country, price, source)
-                        VALUES (?, ?, ?, ?, ?, ?, ?)
-                    """, (category, clean_name, memory, color, country, price, source))
+                if item['type'] == 'parent':
+                    # Обновляем текущую родительскую категорию
+                    current_parent = item['name']
+                    current_subcategory = None
+                    print(f"  Родительская категория: {current_parent}")
                     
-                    products_loaded += 1
-                except Exception as e:
-                    # Пропускаем проблемные записи, но продолжаем обработку
-                    continue
+                elif item['type'] == 'subcategory':
+                    # Обновляем текущую подкатегорию
+                    current_subcategory = item['name']
+                    print(f"    Подкатегория: {current_subcategory}")
+                    
+                elif item['type'] == 'product':
+                    # Обрабатываем товар
+                    product_name_str = item['name']
+                    price_str = item['price']
+                    
+                    # Определяем категорию:
+                    # - Если есть подкатегория, используем её
+                    # - Иначе используем родительскую категорию
+                    # - Если ничего нет, используем fallback
+                    if current_subcategory:
+                        category = current_subcategory
+                        parent_category = current_parent
+                    elif current_parent:
+                        category = current_parent
+                        parent_category = current_parent
+                    else:
+                        # Fallback - определяем автоматически
+                        category = extract_category(product_name_str)
+                        parent_category = None
+                    
+                    # Извлекаем данные из названия
+                    memory = extract_memory(product_name_str)
+                    color = extract_color(product_name_str)
+                    country_flag = extract_country_flag_from_name(product_name_str)
+                    
+                    # Если флаг не найден, используем None
+                    if not country_flag:
+                        country = None
+                    else:
+                        country = country_flag
+                    
+                    # Парсим цену
+                    price = parse_price(price_str)
+                    
+                    if price is None:
+                        continue
+                    
+                    # Убираем флаг и лишние пробелы из названия для сохранения
+                    clean_name = product_name_str
+                    # Убираем флаги
+                    for flag in SUPPORTED_COUNTRY_FLAGS:
+                        clean_name = clean_name.replace(flag, '')
+                    clean_name = re.sub(r'\s+', ' ', clean_name).strip()
+                    
+                    # Сохраняем в БД
+                    try:
+                        cur.execute("""
+                            INSERT INTO products (parent_category, category, name, memory, color, country, price, source)
+                            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                        """, (parent_category, category, clean_name, memory, color, country, price, source))
+                        
+                        products_loaded += 1
+                    except Exception as e:
+                        print(f"Ошибка при сохранении товара: {e}")
+                        continue
             
             conn.commit()
         
+        print(f"Загружено товаров: {products_loaded}")
         return products_loaded
     
     except Exception as e:
